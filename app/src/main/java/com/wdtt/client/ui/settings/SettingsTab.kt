@@ -84,8 +84,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.draw.scale
 import com.wdtt.client.NotificationHelper
-import com.wdtt.client.isNewerVersion
 import com.wdtt.client.stripVkUrlStatic
+import com.wdtt.client.account.AccountCard
+import com.wdtt.client.account.AccountRepository
 
 private const val WORKERS_PER_GROUP = 9
 
@@ -140,6 +141,8 @@ fun SettingsTabContent(
     onConnectRequested: () -> Unit = {},
     onOpenProfiles: () -> Unit = {},
 ) {
+    val account = remember { AccountRepository.get(context) }
+    val accountState by account.state.collectAsStateWithLifecycle()
     val savedConnectionPassword by settingsStore.connectionPassword.collectAsStateWithLifecycle(initialValue = "")
     val savedManualPortsEnabled by settingsStore.manualPortsEnabled.collectAsStateWithLifecycle(initialValue = false)
     val savedServerDtlsPort by settingsStore.serverDtlsPort.collectAsStateWithLifecycle(initialValue = 56000)
@@ -183,10 +186,6 @@ fun SettingsTabContent(
         serverRawPortInput = serverRawPort.toString()
     }
     val detailedLogs by settingsStore.detailedLogs.collectAsStateWithLifecycle(initialValue = false)
-    val updateCheckIntervalHours by settingsStore.updateCheckIntervalHours.collectAsStateWithLifecycle(
-        initialValue = com.wdtt.client.DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
-    )
-    val includeBetaUpdates by settingsStore.includeBetaUpdates.collectAsStateWithLifecycle(initialValue = false)
     val subscriptionAutoRefreshHours by settingsStore.subscriptionAutoRefreshHours.collectAsStateWithLifecycle(
         initialValue = SettingsStore.DEFAULT_SUB_AUTO_REFRESH_HOURS
     )
@@ -996,63 +995,6 @@ fun SettingsTabContent(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                            Text(
-                                "Проверять обновления",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                "Автоматически проверять наличие обновлений при открытии приложения",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = updateCheckIntervalHours != com.wdtt.client.UPDATE_CHECK_NEVER,
-                            onCheckedChange = { enabled ->
-                                scope.launch {
-                                    val newInterval = if (enabled) {
-                                        com.wdtt.client.DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
-                                    } else {
-                                        com.wdtt.client.UPDATE_CHECK_NEVER
-                                    }
-                                    settingsStore.saveUpdateCheckIntervalHours(newInterval)
-                                }
-                            }
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                            Text(
-                                "Бета-обновления",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                "Показывать pre-release сборки с GitHub (v*-beta)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = includeBetaUpdates,
-                            onCheckedChange = { enabled ->
-                                scope.launch { settingsStore.saveIncludeBetaUpdates(enabled) }
-                            }
-                        )
-                    }
-
                     val notificationsEnabled = NotificationHelper.areNotificationsEnabled(context)
                     if (!notificationsEnabled) {
                         Surface(
@@ -1071,7 +1013,7 @@ fun SettingsTabContent(
                                     color = MaterialTheme.colorScheme.onErrorContainer,
                                 )
                                 Text(
-                                    "Без них не видно статус туннеля, капчу и вход VK. На Xiaomi/Samsung включите уведомления для qWDTT вручную.",
+                                    "Без них не видно статус туннеля, капчу и вход VK. На Xiaomi/Samsung включите уведомления для SafarVPN вручную.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
                                 )
@@ -1491,10 +1433,6 @@ fun SettingsTabContent(
                     )
 
                     val currentVersion = remember { "v${com.wdtt.client.BuildConfig.VERSION_NAME.removePrefix("v")}" }
-                    var isCheckingUpdates by remember { mutableStateOf(false) }
-                    val updateLatestVersion by settingsStore.updateLatestVersion.collectAsStateWithLifecycle(initialValue = "")
-                    val updateLastError by settingsStore.updateLastError.collectAsStateWithLifecycle(initialValue = "")
-
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1503,7 +1441,7 @@ fun SettingsTabContent(
                         ) {
                             Column {
                                 Text(
-                                    text = "qWDTT",
+                                    text = "SafarVPN",
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1514,249 +1452,42 @@ fun SettingsTabContent(
                                 )
                             }
                             
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Button(
-                                    onClick = {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/darkbitVPN"))
-                                        context.startActivity(intent)
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text("Telegram", style = MaterialTheme.typography.labelMedium)
-                                }
-
-                                OutlinedButton(
-                                    onClick = {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/SpaceNeuroX/proxy-turn-vk-android"))
-                                        context.startActivity(intent)
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text("GitHub", style = MaterialTheme.typography.labelMedium)
-                                }
-                            }
                         }
 
                         Text(
-                            text = "Форк оригинального проекта amurcanov/proxy-turn-vk-android от разработчика SpaceNeuroX.",
+                            text = "SafarVPN основан на qWDTT (SpaceNeuroX/proxy-turn-vk-android) и проекте amurcanov/proxy-turn-vk-android. Лицензия GNU GPL v3; исходные авторы сохраняют свои права.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         OutlinedButton(
                             onClick = {
-                                val intent = Intent(
-                                    Intent.ACTION_VIEW,
-                                    Uri.parse("https://pay.cloudtips.ru/p/64a6c43c")
-                                )
-                                context.startActivity(intent)
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(com.wdtt.client.AppLinks.SUPPORT_URL)))
                             },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.Favorite,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Поблагодарить разработчика",
-                                style = MaterialTheme.typography.labelLarge,
-                            )
+                            Text("Поддержка · @safarvpn_bot")
                         }
                         Text(
-                            text = "Если приложение помогает — можно оставить чаевые через CloudTips.",
+                            text = "Автоматическая проверка и установка обновлений отключены.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Info,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        "Готовые профили",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                }
-                                
-                                Text(
-                                    "Вы можете получить готовые конфиги напрямую в этих Telegram-ботах:",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/darkbit_vpnbot"))
-                                            context.startActivity(intent)
-                                        },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.surface,
-                                            contentColor = MaterialTheme.colorScheme.primary
-                                        ),
-                                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                        contentPadding = PaddingValues(vertical = 10.dp)
-                                    ) {
-                                        Text(
-                                            "🤖 @darkbit_vpnbot",
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.labelMedium
-                                        )
-                                    }
-
-                                    Button(
-                                        onClick = {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/sidylinkbot"))
-                                            context.startActivity(intent)
-                                        },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.surface,
-                                            contentColor = MaterialTheme.colorScheme.primary
-                                        ),
-                                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                        contentPadding = PaddingValues(vertical = 10.dp)
-                                    ) {
-                                        Text(
-                                            "🤖 @sidylinkbot",
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.labelMedium
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                        // Проверка обновлений
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            val updateStatusText = remember(isCheckingUpdates, updateLatestVersion, updateLastError) {
-                                when {
-                                    isCheckingUpdates -> "Проверяем..."
-                                    updateLatestVersion.isNotBlank() && isNewerVersion(currentVersion, updateLatestVersion, includeBetaUpdates) -> "Доступна $updateLatestVersion!"
-                                    updateLatestVersion.isNotBlank() -> "Обновлений нет"
-                                    updateLastError.isNotBlank() -> "Ошибка"
-                                    else -> "Не проверено"
-                                }
-                            }
-                            
-                            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                                Text(
-                                    "Обновления",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = updateStatusText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (updateLatestVersion.isNotBlank() && isNewerVersion(currentVersion, updateLatestVersion, includeBetaUpdates)) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                )
-                            }
-
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isCheckingUpdates = true
-                                        try {
-                                            val release = com.wdtt.client.fetchLatestReleaseInfo(
-                                                currentVersion,
-                                                includeBetaUpdates,
-                                            )
-                                            if (release != null) {
-                                                settingsStore.saveUpdateState(
-                                                    lastCheckAt = System.currentTimeMillis(),
-                                                    latestVersion = release.versionTag,
-                                                    error = ""
-                                                )
-                                                if (isNewerVersion(currentVersion, release.versionTag, includeBetaUpdates)) {
-                                                    Toast.makeText(context, "Доступна новая версия: ${release.versionTag}", Toast.LENGTH_LONG).show()
-                                                } else {
-                                                    Toast.makeText(context, "У вас последняя версия!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                settingsStore.saveUpdateState(
-                                                    lastCheckAt = System.currentTimeMillis(),
-                                                    latestVersion = "",
-                                                    error = "Ошибка"
-                                                )
-                                                Toast.makeText(context, "Не удалось проверить обновления", Toast.LENGTH_SHORT).show()
-                                            }
-                                        } catch (e: java.lang.Exception) {
-                                            Toast.makeText(context, "Ошибка: ${e.message}", Toast.LENGTH_SHORT).show()
-                                        } finally {
-                                            isCheckingUpdates = false
-                                        }
-                                    }
-                                },
-                                enabled = !isCheckingUpdates,
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text("Проверить", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
                         // Копия отчета
                         OutlinedButton(
                             onClick = {
                                 val reportText = """
-                                    Приложение: qWDTT
+                                    Приложение: SafarVPN
                                     Версия: $currentVersion
                                     Android API: ${Build.VERSION.SDK_INT}
                                     Архитектура (ABI): ${Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"}
                                     Устройство: ${Build.MANUFACTURER} ${Build.MODEL}
                                 """.trimIndent()
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("qWDTT Report", reportText))
+                                clipboard.setPrimaryClip(ClipData.newPlainText("SafarVPN Report", reportText))
                                 Toast.makeText(context, "Отчёт о системе скопирован!", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.fillMaxWidth(),
@@ -1797,7 +1528,7 @@ fun SettingsTabContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "qWDTT",
+                text = "SafarVPN",
                 style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
                 color = MaterialTheme.colorScheme.primary
             )
@@ -2086,6 +1817,15 @@ fun SettingsTabContent(
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+        AccountCard(
+            state = accountState,
+            onTelegramLogin = { account.beginLogin(context, "telegram") },
+            onGoogleLogin = { account.beginLogin(context, "google") },
+            onCancelLogin = account::cancelLogin,
+            onRefresh = account::refreshAccount,
+            onLogout = account::logout,
+        )
 
         AppSectionCard(
             contentPadding = PaddingValues(16.dp),

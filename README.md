@@ -1,33 +1,33 @@
-# qWDTT
+# SafarVPN local Android fork
 
-qWDTT — Android-приложение для подключения к собственному VPS через TURN-инфраструктуру звонков VK.
+This local fork is based on qWDTT by SpaceNeuroX, which derives from the original WDTT project by amurcanov. Upstream source revision: `a296c57eaba69bb9479a24f9157856490890e47d`.
 
-Приложение создаёт системный VPN-туннель на телефоне, передаёт зашифрованный трафик через VK TURN и выпускает его в интернет через ваш сервер. Для сети такое соединение похоже на медиатрафик звонка WebRTC, а не на обычное прямое подключение к VPN-серверу.
+- Display name: SafarVPN; application ID: `ru.safarvpn.com`.
+- Original logo, color palettes, VPN and profile functionality retained.
+- Existing `qwdtt://`, `wdtt://`, `.qwdtt`, WireGuard and subscription import formats retained.
+- One support item in Settings: `https://t.me/safarvpn_bot`.
+- Upstream automatic/manual update lookup, APK downloader, installer and installer permission removed. Subscription/profile refresh remains available.
+- GNU GPL v3 applies; see [LICENSE](LICENSE). Original authors retain their copyright.
 
-## Быстрый старт
+## Windows build
 
-1. Скачайте APK в разделе [Releases](https://github.com/SpaceNeuroX/proxy-turn-vk-android/releases).
-2. Добавьте VPS на вкладке «Серверы» и выполните установку серверной части.
-3. Создайте профиль подключения или импортируйте готовую ссылку.
-4. Добавьте хеш звонка VK.
-5. Нажмите «Подключить» и разрешите Android создать VPN-соединение.
+Use Android Studio's bundled JBR, Android SDK platform 35, build-tools 35/36, Android NDK 28.2.13676358 and Go 1.26+. Set `sdk.dir` in the ignored `local.properties`. This prepared checkout automatically uses Go and NDK from `.build-tools`, including when tasks run from Android Studio. For an external toolchain, set `ANDROID_NDK_HOME` and put Go on PATH. Linux uses the original shell build.
 
-## Сборки
+Generate a permanent private key once with `scripts/create-signing-key.ps1`. It is stored in `../safarvpn-signing` outside this Git checkout; keep an offline backup of that private folder. Release signing fails without this key rather than silently using debug credentials.
 
-- стабильные подписанные версии публикуются в [GitHub Releases](https://github.com/SpaceNeuroX/proxy-turn-vk-android/releases);
-- тестовые debug-сборки ветки `develop` доступны в [GitHub Actions](https://github.com/SpaceNeuroX/proxy-turn-vk-android/actions/workflows/android-debug.yml).
+For this prepared Windows checkout:
 
-## Обсуждение и поддержка
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/download-go-dependencies.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-release-windows.ps1
+```
 
-- [Группа qWDTT в Telegram](https://t.me/darkbit_chat)
-- [Поддержать разработку](https://pay.cloudtips.ru/p/64a6c43c)
+Repository: https://github.com/xsaidi/SafarVPN. The `safarvpn-1.4.5` tag preserves the Android 1.4.5 (versionCode 43) recovery baseline. See [RELEASE-1.4.5.md](RELEASE-1.4.5.md).
 
-## Лицензия
+Modified locally on 2026-10-13. Upstream provenance: https://github.com/SpaceNeuroX/proxy-turn-vk-android and https://github.com/amurcanov/proxy-turn-vk-android. The unchanged LICENSE includes the full GNU GPL v3 terms.
 
-Проект распространяется по лицензии [GNU GPL v3](LICENSE).
+The release script configures the bundled JBR and local caches. Fresh Windows checkouts can prepare Go/SDK with `scripts/bootstrap-windows.ps1` followed by `scripts/install-sdk-packages.ps1`. The Gradle wrapper and Maven repositories use official download endpoints; module checksums remain enabled.
 
-## Происхождение проекта
+## Android Studio
 
-При создании qWDTT в качестве технической основы использовались исходники Android-приложения и серверной части оригинального проекта [WDTT](https://github.com/amurcanov/proxy-turn-vk-android). Оригинальный репозиторий сейчас архивирован.
-
-qWDTT — самостоятельное развитие этой кодовой базы: приложение, интерфейс, режимы подключения, управление серверами и значительная часть клиентской и серверной логики развиваются отдельно. Проект не является официальным продолжением или новым релизом оригинального WDTT.
+Open the repository root `safarvpn-android`, not its `app` subfolder. Kotlin sources are in `app/src/main/java/com/wdtt/client`, and resources are in `app/src/main/res`. The internal namespace remains `com.wdtt.client`; the installed application's ID is `ru.safarvpn.com`. Android Studio's SDK location on this computer is `%LOCALAPPDATA%/Android/Sdk`, pointing to this checkout's `.build-tools/android-sdk`. If moving the checkout, update the SDK path in Studio and `local.properties`.

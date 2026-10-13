@@ -409,14 +409,14 @@ private fun exportFullLog(context: android.content.Context, uiLogText: String) {
 
             val output = buildString {
                 appendLine("=== Информация о среде ===")
-                appendLine("Приложение: qWDTT ${com.wdtt.client.BuildConfig.VERSION_NAME} (build ${com.wdtt.client.BuildConfig.VERSION_CODE})")
+                appendLine("Приложение: SafarVPN ${com.wdtt.client.BuildConfig.VERSION_NAME} (build ${com.wdtt.client.BuildConfig.VERSION_CODE})")
                 appendLine("Устройство: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (${android.os.Build.DEVICE})")
                 appendLine("Android: ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
                 appendLine()
                 appendLine("=== Текущее подключение ===")
                 appendLine(TunnelManager.connectionDiagnosticsSummary())
                 appendLine()
-                appendLine("=== UI-лог qWDTT ===")
+                appendLine("=== UI-лог SafarVPN ===")
                 appendLine(uiLogText)
                 appendLine()
                 appendLine("=== logcat ===")

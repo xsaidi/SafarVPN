@@ -13,7 +13,6 @@ app/build/
 app/release/
 
 # ===== Go =====
-go.sum
 
 # ===== Native Libraries (compiled) =====
 *.so
@@ -28,6 +27,7 @@ app/src/main/assets/server
 # ===== Keystore / Secrets =====
 *.keystore
 *.jks
+*.p12
 *.key
 *.pem
 
@@ -55,3 +55,6 @@ wg-turn-client
 .kotlin/
 .keys/
 .gradle-home/
+
+.build-tools/
+artifacts/

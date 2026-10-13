@@ -41,7 +41,7 @@ class TunnelWidgetProvider : AppWidgetProvider() {
                         if (mode != SettingsStore.CONNECTION_MODE_SOCKS) {
                             Toast.makeText(
                                 context.applicationContext,
-                                "Разрешите qWDTT создать VPN-подключение",
+                                "Разрешите SafarVPN создать VPN-подключение",
                                 Toast.LENGTH_LONG,
                             ).show()
                             openVpnPermissionActivity(context)
@@ -55,7 +55,7 @@ class TunnelWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
-        const val ACTION_TOGGLE = "net.qwdtt.client.ACTION_TOGGLE"
+        const val ACTION_TOGGLE = "ru.safarvpn.com.ACTION_TOGGLE"
 
         fun updateWidgetState(context: Context, running: Boolean, statsText: String?) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
@@ -68,13 +68,13 @@ class TunnelWidgetProvider : AppWidgetProvider() {
                 // Update status dot and title
                 if (running) {
                     views.setImageViewResource(R.id.widget_status_dot, R.drawable.widget_dot_green)
-                    views.setTextViewText(R.id.widget_status_title, "qWDTT: Активен")
+                    views.setTextViewText(R.id.widget_status_title, "SafarVPN: Активен")
                     views.setTextViewText(R.id.widget_stats_text, statsText ?: "Туннель запущен")
                     views.setImageViewResource(R.id.widget_toggle_button, android.R.drawable.ic_media_pause)
                     views.setInt(R.id.widget_toggle_button, "setColorFilter", android.graphics.Color.parseColor("#FF5252")) // Red pause button
                 } else {
                     views.setImageViewResource(R.id.widget_status_dot, R.drawable.widget_dot_gray)
-                    views.setTextViewText(R.id.widget_status_title, "qWDTT: Отключен")
+                    views.setTextViewText(R.id.widget_status_title, "SafarVPN: Отключен")
                     views.setTextViewText(R.id.widget_stats_text, "Нажмите для подключения")
                     views.setImageViewResource(R.id.widget_toggle_button, android.R.drawable.ic_media_play)
                     views.setInt(R.id.widget_toggle_button, "setColorFilter", android.graphics.Color.parseColor("#3DDC84")) // Green play button
@@ -102,13 +102,13 @@ class TunnelWidgetProvider : AppWidgetProvider() {
             // Set initial state
             if (running) {
                 views.setImageViewResource(R.id.widget_status_dot, R.drawable.widget_dot_green)
-                views.setTextViewText(R.id.widget_status_title, "qWDTT: Активен")
+                views.setTextViewText(R.id.widget_status_title, "SafarVPN: Активен")
                 views.setTextViewText(R.id.widget_stats_text, stats)
                 views.setImageViewResource(R.id.widget_toggle_button, android.R.drawable.ic_media_pause)
                 views.setInt(R.id.widget_toggle_button, "setColorFilter", android.graphics.Color.parseColor("#FF5252"))
             } else {
                 views.setImageViewResource(R.id.widget_status_dot, R.drawable.widget_dot_gray)
-                views.setTextViewText(R.id.widget_status_title, "qWDTT: Отключен")
+                views.setTextViewText(R.id.widget_status_title, "SafarVPN: Отключен")
                 views.setTextViewText(R.id.widget_stats_text, "Нажмите для подключения")
                 views.setImageViewResource(R.id.widget_toggle_button, android.R.drawable.ic_media_play)
                 views.setInt(R.id.widget_toggle_button, "setColorFilter", android.graphics.Color.parseColor("#3DDC84"))

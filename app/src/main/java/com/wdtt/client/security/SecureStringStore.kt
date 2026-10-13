@@ -10,11 +10,10 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class SecureStringStore(context: Context) {
+class SecureStringStore(context: Context, private val keyAlias: String = "wdtt.settings.secrets") {
     private val appContext = context.applicationContext
 
     companion object {
-        private const val KEY_ALIAS = "wdtt.settings.secrets"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_BITS = 128
@@ -50,14 +49,19 @@ class SecureStringStore(context: Context) {
         }.getOrNull()
     }
 
+    /** Use only for a dedicated store alias; invalidates ciphertext even if preference deletion fails. */
+    fun eraseKey() {
+        synchronized(appContext) { keyStore.deleteEntry(keyAlias) }
+    }
+
     private fun getOrCreateKey(): SecretKey {
         synchronized(appContext) {
-            val existing = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
+            val existing = keyStore.getKey(keyAlias, null) as? SecretKey
             if (existing != null) return existing
 
             val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
             val spec = KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                keyAlias,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)

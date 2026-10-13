@@ -19,11 +19,11 @@ android {
     compileSdk = 35
     
     defaultConfig {
-        applicationId = "net.qwdtt.client"
+        applicationId = "ru.safarvpn.com"
         minSdk = 28
         targetSdk = 35
-        versionCode = 42
-        versionName = "1.4.4"
+        versionCode = 43
+        versionName = "1.4.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -47,54 +47,35 @@ android {
         localProperties.load(localPropertiesFile.inputStream())
     }
 
+    // Credentials are supplied by a private file outside this Git checkout.
+    val signingProperties = Properties()
+    val signingPropertiesFile = rootProject.file("../safarvpn-signing/signing.properties")
+    if (gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) } &&
+        !signingPropertiesFile.isFile) {
+        throw GradleException("Permanent release signing configuration is unavailable. Run scripts/create-signing-key.ps1 with the project owner's account.")
+    }
+    if (signingPropertiesFile.exists()) {
+        signingPropertiesFile.inputStream().use { signingProperties.load(it) }
+    }
     signingConfigs {
         create("release") {
-            val keyFile = localProperties.getProperty("KEYSTORE_FILE")
-            if (keyFile != null) {
-                // Резолвим путь: если начинается с "..", берём от корня проекта
-                val resolvedFile = if (keyFile.startsWith("..")) {
-                    // ../release.keystore -> корень проекта / release.keystore
-                    file(rootDir.resolve(keyFile.substring(3)))
-                } else {
-                    file(keyFile)
-                }
-                if (resolvedFile.exists()) {
-                    storeFile = resolvedFile
-                    storePassword = localProperties.getProperty("KEYSTORE_PASSWORD")
-                    keyAlias = localProperties.getProperty("KEY_ALIAS")
-                    keyPassword = localProperties.getProperty("KEY_PASSWORD")
-                } else {
-                    println("WARNING: Keystore file not found: $keyFile (resolved: ${resolvedFile.absolutePath})")
-                }
+            if (signingPropertiesFile.exists()) {
+                storeFile = file(signingProperties.getProperty("storeFile"))
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
             }
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
         }
     }
-
     buildTypes {
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            val keyFile = localProperties.getProperty("KEYSTORE_FILE")
-            val resolvedFile = if (keyFile != null && keyFile.startsWith("..")) {
-                file(rootDir.resolve(keyFile.substring(3)))
-            } else if (keyFile != null) {
-                file(keyFile)
-            } else null
-            
-            if (resolvedFile != null && resolvedFile.exists()) {
-                signingConfig = signingConfigs.getByName("release")
-                println("✅ Signing config applied: ${resolvedFile.absolutePath}")
-            } else {
-                println("⚠️ WARNING: Keystore not found, using debug signing")
-                println("   Looked for: ${resolvedFile?.absolutePath ?: keyFile}")
-            }
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -131,11 +112,32 @@ android {
     }
 }
 
+// Use the project-local toolchain from Android Studio as well as from the build script.
+val localGoDirectory = rootDir.resolve(".build-tools/go")
+val goExecutable = localGoDirectory.resolve(
+    if (System.getProperty("os.name").startsWith("Windows")) "bin/go.exe" else "bin/go"
+).takeIf { it.isFile }?.absolutePath ?: "go"
+val localNdkDirectory = rootDir.resolve(".build-tools/android-sdk/ndk/28.2.13676358")
+
 tasks.register<Exec>("buildNativeLibs") {
     group = "build"
     description = "Build Go client binaries for Android ABIs and copy them into app/src/main/jniLibs"
     workingDir = rootDir
-    commandLine("bash", rootDir.resolve("scripts/build-native-libs.sh").absolutePath)
+    environment("GO_EXE", goExecutable)
+    if (localNdkDirectory.isDirectory) {
+        environment("ANDROID_NDK_HOME", localNdkDirectory.absolutePath)
+    }
+    if (localGoDirectory.isDirectory) {
+        environment("GOMODCACHE", rootDir.resolve(".build-tools/go-mod-cache").absolutePath)
+        environment("GOCACHE", rootDir.resolve(".build-tools/go-build-cache").absolutePath)
+        environment("GOPATH", rootDir.resolve(".build-tools/go-work").absolutePath)
+    }
+    if (System.getProperty("os.name").startsWith("Windows")) {
+        commandLine("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            rootDir.resolve("scripts/build-native-libs.ps1").absolutePath)
+    } else {
+        commandLine("bash", rootDir.resolve("scripts/build-native-libs.sh").absolutePath)
+    }
     environment(
         "TARGET_ABIS",
         providers.gradleProperty("targetAbis").orNull?.replace(',', ' ')
@@ -150,8 +152,13 @@ tasks.register<Exec>("buildServerAsset") {
     environment("GOOS", "linux")
     environment("GOARCH", "amd64")
     environment("CGO_ENABLED", "0")
+    if (localGoDirectory.isDirectory) {
+        environment("GOMODCACHE", rootDir.resolve(".build-tools/go-mod-cache").absolutePath)
+        environment("GOCACHE", rootDir.resolve(".build-tools/go-build-cache").absolutePath)
+        environment("GOPATH", rootDir.resolve(".build-tools/go-work").absolutePath)
+    }
     commandLine(
-        "go",
+        goExecutable,
         "build",
         "-trimpath",
         "-o",
@@ -166,6 +173,7 @@ tasks.named("preBuild").configure {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")

@@ -1,6 +1,8 @@
 package com.wdtt.client
 
 import android.Manifest
+import com.wdtt.client.account.AccountRepository
+import com.wdtt.client.account.MobileAuthProtocol
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
@@ -63,8 +65,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
-import com.wdtt.client.ui.AppUpdateDialog
-import com.wdtt.client.ui.SupportNoticeDialog
 import com.wdtt.client.ui.ProfilesTab
 import com.wdtt.client.ui.LogsTab
 import com.wdtt.client.ui.SettingsTab
@@ -146,7 +146,11 @@ class MainActivity : ComponentActivity() {
             AppShortcuts.ACTION_STOP_TUNNEL -> TunnelControl.stop(applicationContext)
             Intent.ACTION_VIEW -> {
                 val uri = intent.data
-                if (uri != null) {
+                if (uri != null && MobileAuthProtocol.isAuthCandidate(uri.toString())) {
+                    AccountRepository.get(applicationContext).handleReturn(uri.toString())
+                    // Do not retain a one-use code for activity recreation or profile import.
+                    intent.data = null
+                } else if (uri != null && uri.scheme in setOf("file", "content")) {
                     pendingFileUri.value = uri
                 }
             }
@@ -162,6 +166,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         activeActivities++
         currentActivity = this
+        AccountRepository.get(applicationContext).onForeground()
         ManlCaptchaWebViewManager.checkAndShowPendingCaptcha(this)
         VkAuthWebViewManager.checkAndShowPendingAuth(this)
     }
@@ -290,10 +295,6 @@ fun MainScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
-    val updateCheckIntervalHours by settingsStore.updateCheckIntervalHours.collectAsStateWithLifecycle(
-        initialValue = DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
-    )
-    val includeBetaUpdates by settingsStore.includeBetaUpdates.collectAsStateWithLifecycle(initialValue = false)
     val interfaceRole by settingsStore.interfaceRole.collectAsStateWithLifecycle(initialValue = "admin")
     val isAdminInterface = interfaceRole == "admin"
     val autoSwitchToLogs by settingsStore.autoSwitchToLogs.collectAsStateWithLifecycle(initialValue = true)
@@ -301,9 +302,6 @@ fun MainScreen(
     val activeNavItems = remember(isAdminInterface) {
         navItems.filter { isAdminInterface || it.id != 1 }
     }
-    var pendingRelease by remember { mutableStateOf<AppReleaseInfo?>(null) }
-    var showSupportNotice by remember { mutableStateOf(false) }
-    val currentVersion = remember { "v${BuildConfig.VERSION_NAME.removePrefix("v")}" }
     val safeBottomInset = with(density) { WindowInsets.safeDrawing.getBottom(density).toDp() }
     val navOverlayReserve = safeBottomInset + 96.dp
 
@@ -338,16 +336,6 @@ fun MainScreen(
     }
 
     var requestCreateProfile by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        val supportShownFor = settingsStore.supportNoticeShownVersionCode.first()
-        val currentCode = BuildConfig.VERSION_CODE
-        if (currentCode >= SettingsStore.SUPPORT_NOTICE_VERSION_CODE &&
-            supportShownFor < SettingsStore.SUPPORT_NOTICE_VERSION_CODE
-        ) {
-            showSupportNotice = true
-        }
-    }
 
     // Тихое автообновление подписок при открытии (не во время туннеля).
     LaunchedEffect(Unit) {
@@ -390,63 +378,6 @@ fun MainScreen(
                     "Подписки обновлены (${result.refreshedOk})",
                     Toast.LENGTH_SHORT
                 ).show()
-            }
-        }
-    }
-
-    fun dismissSupportNotice() {
-        showSupportNotice = false
-        scope.launch {
-            settingsStore.saveSupportNoticeShownVersionCode(BuildConfig.VERSION_CODE)
-        }
-    }
-
-    LaunchedEffect(updateCheckIntervalHours, includeBetaUpdates) {
-        if (updateCheckIntervalHours == UPDATE_CHECK_NEVER) return@LaunchedEffect
-
-        val intervalMillis = updateIntervalHoursToMillis(updateCheckIntervalHours)
-            ?: updateIntervalHoursToMillis(DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)
-            ?: 12L * 60L * 60L * 1000L
-
-        suspend fun runUpdateCheck(reason: String) {
-            val checkedAt = System.currentTimeMillis()
-            val includeBeta = settingsStore.includeBetaUpdates.first()
-            val release = fetchLatestReleaseInfo(currentVersion, includeBeta)
-            settingsStore.saveUpdateState(
-                lastCheckAt = checkedAt,
-                latestVersion = release?.versionTag ?: "",
-                error = if (release == null) "Не удалось проверить" else ""
-            )
-
-            if (release == null) {
-                Log.w("WDTT", "[WARN] Update check: no release info, local=$currentVersion reason=$reason")
-                return
-            }
-
-            val hasUpdate = isNewerVersion(currentVersion, release.versionTag, includeBeta)
-            val postponeVer = settingsStore.updatePostponeVersion.first()
-            val postponeUntil = settingsStore.updatePostponeUntil.first()
-            val isPostponed = postponeVer == release.versionTag && checkedAt < postponeUntil
-            Log.i(
-                "WDTT",
-                "Update check: local=$currentVersion remote=${release.versionTag} newer=$hasUpdate postponed=$isPostponed reason=$reason"
-            )
-
-            if (hasUpdate && !isPostponed) {
-                pendingRelease = release
-            }
-        }
-
-        runUpdateCheck("startup")
-
-        while (isActive) {
-            val now = System.currentTimeMillis()
-            val lastCheck = settingsStore.updateLastCheckAt.first()
-            val nextCheckAt = lastCheck + intervalMillis
-            val waitMs = (nextCheckAt - now).coerceAtLeast(intervalMillis)
-            delay(waitMs)
-            if (isActive) {
-                runUpdateCheck("periodic")
             }
         }
     }
@@ -562,138 +493,18 @@ fun MainScreen(
 
     if (!hasSeenWelcomeDialog) {
         AlertDialog(
-            onDismissRequest = { 
-                scope.launch { settingsStore.saveHasSeenWelcomeDialog(true) }
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "Готовые профили",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "Вы можете получить готовые конфиги напрямую в этих Telegram-ботах:",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/darkbit_vpnbot"))
-                                context.startActivity(intent)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(vertical = 10.dp)
-                        ) {
-                            Text(
-                                "🤖 @darkbit_vpnbot",
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-
-                        Button(
-                            onClick = {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/sidylinkbot"))
-                                context.startActivity(intent)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(vertical = 10.dp)
-                        ) {
-                            Text(
-                                "🤖 @sidylinkbot",
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Следите за обновлениями",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "Все дальнейшие обновления и новости мы будем публиковать в нашем канале:",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Button(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(AppLinks.TELEGRAM_CHANNEL))
-                            context.startActivity(intent)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(vertical = 10.dp)
-                    ) {
-                        Text("📢 @darkbitVPN", style = MaterialTheme.typography.labelLarge)
-                    }
-                    Text(
-                        "Просто скопируйте текст профиля или конфигурационный файл и импортируйте его на вкладке «Профили». Эта памятка также доступна в настройках.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
+            onDismissRequest = { scope.launch { settingsStore.saveHasSeenWelcomeDialog(true) } },
+            title = { Text("SafarVPN") },
+            text = { Text("Добавьте профиль на вкладке «Профили»: импортируйте ссылку, файл или QR-код. Помощь доступна в настройках в разделе «Поддержка».") },
             confirmButton = {
-                Button(
-                    onClick = { scope.launch { settingsStore.saveHasSeenWelcomeDialog(true) } }
-                ) {
+                Button(onClick = { scope.launch { settingsStore.saveHasSeenWelcomeDialog(true) } }) {
                     Text("Понятно")
                 }
             }
         )
     }
-
-    pendingRelease?.let { release ->
-        AppUpdateDialog(
-            release = release,
-            onPostpone = {
-                pendingRelease = null
-                Toast.makeText(context, "Обновление отложено на 24 часа.", Toast.LENGTH_SHORT).show()
-                scope.launch {
-                    val now = System.currentTimeMillis()
-                    settingsStore.saveUpdatePostpone(
-                        version = release.versionTag,
-                        until = now + 24L * 60L * 60L * 1000L
-                    )
-                }
-            },
-            onUpdate = {
-                pendingRelease = null
-                scope.launch {
-                    openReleaseUrl(context, release.releaseUrl)
-                }
-            }
-        )
-    }
-
-    if (showSupportNotice) {
-        SupportNoticeDialog(
-            versionName = BuildConfig.VERSION_NAME,
-            onDismiss = { dismissSupportNotice() },
-        )
-    }
 }
+
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
@@ -834,17 +645,6 @@ private fun ProxyNavigationBar(
                 }
             }
         }
-    }
-}
-
-private fun openReleaseUrl(context: Context, url: String) {
-    try {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-            addCategory(Intent.CATEGORY_BROWSABLE)
-        }
-        context.startActivity(intent)
-    } catch (_: Exception) {
-        Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
     }
 }
 

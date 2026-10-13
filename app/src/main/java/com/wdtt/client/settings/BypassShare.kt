@@ -107,7 +107,7 @@ object BypassShare {
         val root = runCatching { JSONObject(text) }.getOrNull()
         val format = root?.optString("format", "").orEmpty()
         if (format.isNotEmpty() && format != FORMAT) {
-            throw IllegalArgumentException("Это не файл обхода qWDTT (format=$format)")
+            throw IllegalArgumentException("Это не файл обхода SafarVPN (format=$format)")
         }
 
         val isJsonBypass = root != null &&

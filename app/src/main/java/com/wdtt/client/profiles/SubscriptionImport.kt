@@ -31,7 +31,7 @@ object SubscriptionImport {
                 readTimeout = 20_000
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/json, text/plain, */*")
-                setRequestProperty("User-Agent", "qWDTT-Subscription/1.0")
+                setRequestProperty("User-Agent", "SafarVPN-Subscription/1.0")
             }
             val code = conn.responseCode
             if (code !in 200..299) {

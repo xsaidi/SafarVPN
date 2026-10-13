@@ -1,0 +1,1 @@
+SafarVPN local modifications, 2026-10-13. Based on qWDTT by SpaceNeuroX (SpaceNeuroX/proxy-turn-vk-android), revision a296c57eaba69bb9479a24f9157856490890e47d, derived from WDTT by amurcanov (amurcanov/proxy-turn-vk-android). GNU GPL v3 applies. Original copyright and license notices are retained in the corresponding source code and LICENSE.txt.

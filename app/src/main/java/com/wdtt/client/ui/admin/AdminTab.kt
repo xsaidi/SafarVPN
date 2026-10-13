@@ -746,7 +746,7 @@ private fun PasswordFormSheet(
 }
 
 /**
- * Клик по карточке — сразу готовые ссылки qWDTT (qwdtt://config, наш
+ * Клик по карточке — сразу готовые ссылки SafarVPN (qwdtt://config, наш
  * основной формат с QR) и легаси WDTT (wdtt://host:port:port:port:pass:hash,
  * см. parseQrConfig в ProfilesTab.kt) плюс QR-код на первую из них, чтобы
  * не объяснять человеку вручную, что вводить в приложение.
@@ -841,7 +841,7 @@ private fun PasswordDetailsSheet(
             }
 
             LinkRow(
-                label = "Ссылка qWDTT",
+                label = "Ссылка SafarVPN",
                 value = qwdttLink,
                 onCopy = {
                     clipboard.setText(AnnotatedString(qwdttLink))
