@@ -13,6 +13,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -144,6 +149,16 @@ private fun SignedInAccount(
     onRefresh: () -> Unit,
     onLogout: () -> Unit,
 ) {
+    var confirmLogout by rememberSaveable(profile.userId) { mutableStateOf(false) }
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("Выйти из аккаунта?") },
+            text = { Text("Серверы аккаунта будут удалены с устройства. Ручные профили и добавленные вручную подписки сохранятся.") },
+            confirmButton = { TextButton(onClick = { confirmLogout = false; onLogout() }) { Text("Выйти") } },
+            dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("Отмена") } },
+        )
+    }
     Text(profile.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
     profile.email?.takeIf(String::isNotBlank)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
     profile.telegramUsername?.takeIf(String::isNotBlank)?.let {
@@ -199,7 +214,7 @@ private fun SignedInAccount(
         Text(if (state.refreshing) "Обновляем…" else "Обновить статус")
     }
     TextButton(
-        onClick = onLogout,
+        onClick = { confirmLogout = true },
         enabled = true,
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {

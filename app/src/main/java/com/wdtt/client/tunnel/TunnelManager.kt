@@ -91,6 +91,12 @@ object TunnelManager {
     private var lastSessionTrafficMb = 0.0
 
     val running = MutableStateFlow(false)
+    /** True only after the selected VPN engine/proxy has successfully started. */
+    val connectionReady = MutableStateFlow(false)
+
+    private fun markTransportReady() {
+        if (running.value && process?.isAlive == true) connectionReady.value = true
+    }
     /** true с момента нажатия «Подключить» до запуска Go-процесса или ошибки/отмены. */
     val isConnecting = MutableStateFlow(false)
     /** Epoch ms когда текущий Go-процесс стал running; 0 если не подключён. */
@@ -123,6 +129,7 @@ object TunnelManager {
     }
 
     private fun markRunning(value: Boolean) {
+        if (!value) connectionReady.value = false
         running.value = value
         connectedSinceMs.value = if (value) System.currentTimeMillis() else 0L
     }
@@ -154,6 +161,7 @@ object TunnelManager {
     /** Сразу показывает статус на вкладке «Логи», ещё до старта сервиса / VK auth. */
     fun beginConnecting(hint: String = "Подключение…") {
         if (running.value) return
+        connectionReady.value = false
         connectingStartedAtMs = System.currentTimeMillis()
         isConnecting.value = true
         stats.value = hint
@@ -300,6 +308,7 @@ object TunnelManager {
             currentParams = params
             resetConnectionPipeline()
             config.value = null
+            connectionReady.value = false
             connectingStartedAtMs = System.currentTimeMillis()
             isConnecting.value = true
             stats.value = "Подключение…"
@@ -591,6 +600,7 @@ object TunnelManager {
                 val env = pb.environment()
                 env["LD_LIBRARY_PATH"] = context.applicationInfo.nativeLibraryDir
 
+                connectionReady.value = false
                 process = pb.start()
                 processStartedAtMs = System.currentTimeMillis()
                 wrapAuthTimeoutCount = 0
@@ -1100,6 +1110,7 @@ object TunnelManager {
                                 scope.launch(Dispatchers.Main) {
                                     try {
                                         RawTunEngine.start(rawCtx, ip, dnsCsv, mtu, rawTunSockName)
+                                        markTransportReady()
                                         markConnectionPipelineCompleted(ConnectionStep.RAW)
                                         finishConnectionPipeline()
                                         stats.value = "RAW $ip"
@@ -1131,6 +1142,7 @@ object TunnelManager {
                         // финальный шаг для Raw — дальше идёт RAW-конфиг (см. блок
                         // collectingRawConfig выше), поэтому здесь его не завершаем.
                         if (!isRaw) {
+                            markTransportReady()
                             markConnectionPipelineCompleted(ConnectionStep.SOCKS)
                             finishConnectionPipeline()
                         }
@@ -1162,10 +1174,11 @@ object TunnelManager {
                                         keepWireGuardOnNextConfig = false
                                         preservedWireGuardConfig = null
                                         if (!keepExisting) {
-                                            wgHelper?.startTunnel(configStr)
+                                            checkNotNull(wgHelper) { "WireGuard engine unavailable" }.startTunnel(configStr)
                                         } else {
                                             updateLog("network_wg_kept", "[VPN] WireGuard-интерфейс сохранён при перезапуске транспорта", 1, false)
                                         }
+                                        markTransportReady()
                                         markConnectionPipelineCompleted(ConnectionStep.VPN)
                                         finishConnectionPipeline()
                                     } catch (e: Exception) {
@@ -1368,6 +1381,7 @@ object TunnelManager {
                 }
                 lastReconnectAtMs = now
 
+                connectionReady.value = false
                 isReconnecting.value = true
                 transportRestartInProgress = true
                 preserveVpnDuringReconnect = preserveVpn
@@ -1473,6 +1487,7 @@ object TunnelManager {
 
     // Убивает процесс без изменения running
     private fun killProcess() {
+        connectionReady.value = false
         watchdogJob?.cancel()
         readerJob?.cancel()
         stopGoProcessGracefully()

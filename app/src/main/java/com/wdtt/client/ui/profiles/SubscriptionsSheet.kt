@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
@@ -31,6 +32,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,7 +114,7 @@ fun DeleteSubscriptionDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Удалить подписку?") },
-        text = { Text("«${sub.name}» и папка с профилями будут удалены.") },
+        text = { Text("«${sub.name}» и её профили будут удалены.") },
         confirmButton = {
             Button(
                 onClick = onConfirm,
@@ -134,9 +136,11 @@ fun SubscriptionInfoCard(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onDelete: (() -> Unit)?,
-    onOpenGroup: (() -> Unit)? = null,
+    onPingAll: () -> Unit,
+    isPinging: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val uriHandler = LocalUriHandler.current
     val hasLimit = sub.trafficLimitMb > 0
     val hasTraffic = sub.remoteTrafficUsedMb > 0 || hasLimit
     val progress = if (hasLimit && sub.trafficLimitMb > 0) {
@@ -148,8 +152,6 @@ fun SubscriptionInfoCard(
     val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
 
     Surface(
-        onClick = { onOpenGroup?.invoke() },
-        enabled = onOpenGroup != null,
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
         modifier = modifier.fillMaxWidth()
@@ -184,6 +186,10 @@ fun SubscriptionInfoCard(
                     )
                 }
                 Row {
+                    IconButton(onClick = onPingAll, enabled = !isPinging, modifier = Modifier.size(48.dp)) {
+                        if (isPinging) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = contentColor)
+                        else Icon(androidx.compose.material.icons.Icons.Default.SignalCellularAlt, contentDescription = "Замер задержки всех серверов", tint = contentColor, modifier = Modifier.size(20.dp))
+                    }
                     IconButton(onClick = onRefresh, enabled = !isRefreshing, modifier = Modifier.size(48.dp)) {
                         if (isRefreshing) {
                             CircularProgressIndicator(
@@ -209,6 +215,10 @@ fun SubscriptionInfoCard(
                         )
                     }
                 }
+            }
+
+            TextButton(onClick = { uriHandler.openUri("https://t.me/xsaidi") }) {
+                Text("Поддержка", color = contentColor)
             }
 
             if (sub.isAccount) Text("Из аккаунта · покупка через бота", style = MaterialTheme.typography.bodySmall, color = contentColor)

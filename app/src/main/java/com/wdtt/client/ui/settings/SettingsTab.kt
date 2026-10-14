@@ -85,8 +85,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.draw.scale
 import com.wdtt.client.NotificationHelper
 import com.wdtt.client.stripVkUrlStatic
-import com.wdtt.client.account.AccountCard
-import com.wdtt.client.account.AccountRepository
 
 private const val WORKERS_PER_GROUP = 9
 
@@ -100,7 +98,8 @@ fun SettingsTab(
     currentPalette: String,
     onPaletteChange: (String) -> Unit,
     onConnectRequested: () -> Unit = {},
-    onOpenProfiles: () -> Unit = {},
+    importFileUri: android.net.Uri? = null,
+    onImportHandled: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -121,7 +120,8 @@ fun SettingsTab(
             currentPalette = currentPalette,
             onPaletteChange = onPaletteChange,
             onConnectRequested = onConnectRequested,
-            onOpenProfiles = onOpenProfiles,
+            importFileUri = importFileUri,
+            onImportHandled = onImportHandled,
         )
     }
 }
@@ -139,10 +139,9 @@ fun SettingsTabContent(
     currentPalette: String,
     onPaletteChange: (String) -> Unit,
     onConnectRequested: () -> Unit = {},
-    onOpenProfiles: () -> Unit = {},
+    importFileUri: android.net.Uri? = null,
+    onImportHandled: () -> Unit = {},
 ) {
-    val account = remember { AccountRepository.get(context) }
-    val accountState by account.state.collectAsStateWithLifecycle()
     val savedConnectionPassword by settingsStore.connectionPassword.collectAsStateWithLifecycle(initialValue = "")
     val savedManualPortsEnabled by settingsStore.manualPortsEnabled.collectAsStateWithLifecycle(initialValue = false)
     val savedServerDtlsPort by settingsStore.serverDtlsPort.collectAsStateWithLifecycle(initialValue = 56000)
@@ -150,6 +149,7 @@ fun SettingsTabContent(
     val savedListenPort by settingsStore.listenPort.collectAsStateWithLifecycle(initialValue = 9000)
 
     val tunnelRunning by TunnelManager.running.collectAsStateWithLifecycle()
+    val connectionReady by TunnelManager.connectionReady.collectAsStateWithLifecycle()
     val tunnelConnecting by TunnelManager.isConnecting.collectAsStateWithLifecycle()
     val tunnelReconnecting by TunnelManager.isReconnecting.collectAsStateWithLifecycle()
     tunnelRunning || tunnelConnecting
@@ -204,7 +204,7 @@ fun SettingsTabContent(
 
     LaunchedEffect(tunnelRunning) {
         if (wasRunning && !tunnelRunning) {
-            TunnelManager.startCooldown(5)
+            TunnelManager.startCooldown(1)
         }
         wasRunning = tunnelRunning
     }
@@ -250,7 +250,7 @@ fun SettingsTabContent(
     val goDnsCustomStored by settingsStore.goDnsCustom.collectAsStateWithLifecycle(initialValue = "")
     val goDnsDohCustomStored by settingsStore.goDnsDohCustom.collectAsStateWithLifecycle(initialValue = "")
     val obfsMode by settingsStore.obfsMode.collectAsStateWithLifecycle(initialValue = "audio")
-    val interfaceRole by settingsStore.interfaceRole.collectAsStateWithLifecycle(initialValue = "admin")
+    val interfaceRole by settingsStore.interfaceRole.collectAsStateWithLifecycle(initialValue = "user")
     LaunchedEffect(socksPort) {
         socksPortInput = socksPort.toString()
     }
@@ -1512,13 +1512,22 @@ fun SettingsTabContent(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    val tunnelSecretsMissing = savedConnectionPassword.isBlank()
+    ProfilesTab(
+        importFileUri = importFileUri,
+        onImportHandled = onImportHandled,
+        onProfileApplied = {
+                peerInput = PeerAddress.host(settingsStore.peer.first())
+                portInput = settingsStore.listenPort.first().toString()
+                workersInput = roundToGroup(settingsStore.workersPerHash.first().toFloat(), dynamicMaxWorkers, vkAccountAuth)
+                if (TunnelManager.running.value) {
+                    context.startService(Intent(context, TunnelService::class.java).apply { action = "STOP" })
+                    delay(1_100)
+                    requestVpnAndStart()
+                }
+        },
+        header = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // ═══ Топ-тулбар с заголовком и иконкой настроек ═══
         Row(
             modifier = Modifier
@@ -1548,224 +1557,13 @@ fun SettingsTabContent(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
         // ═══ Подключение — главное действие, сразу на экране ═══
-        val tunnelSecretsMissing = savedConnectionPassword.isBlank()
-        val buttonColor by animateColorAsState(
-            targetValue = when {
-                tunnelRunning -> MaterialTheme.colorScheme.error
-                tunnelConnecting && connectCancelArmed -> MaterialTheme.colorScheme.error
-                else -> MaterialTheme.colorScheme.primary
-            },
-            animationSpec = tween(400),
-            label = "btn_color"
-        )
-
         AppSectionCard(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (profiles.isNotEmpty()) {
-                var expanded by remember { mutableStateOf(false) }
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = { expanded = true },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f),
-                            contentColor = MaterialTheme.colorScheme.primary
-                        ),
-                        border = BorderStroke(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = if (currentProfileName.isNotEmpty()) "Профиль: $currentProfileName" else "Быстрый выбор профиля",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false },
-                        modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(20.dp)
-                            )
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                    ) {
-                        profiles.forEach { p ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        p.name,
-                                        fontWeight = if (p.id == currentProfileId) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (p.id == currentProfileId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
-                                },
-                                onClick = {
-                                    expanded = false
-                                    scope.launch {
-                                        try { profilesStore.applyProfile(context, p.id) }
-                                        catch (_: Exception) {
-                                            Toast.makeText(context, "Не удалось выбрать профиль. Обновите подписку аккаунта.", Toast.LENGTH_LONG).show()
-                                            return@launch
-                                        }
-
-                                        peerInput = PeerAddress.host(settingsStore.peer.first())
-                                        portInput = settingsStore.listenPort.first().toString()
-                                        workersInput = roundToGroup(
-                                            settingsStore.workersPerHash.first().toFloat(),
-                                            dynamicMaxWorkers,
-                                            vkAccountAuth
-                                        )
-
-                                        if (tunnelRunning) {
-                                            context.startService(
-                                                Intent(context, TunnelService::class.java).apply { action = "STOP" }
-                                            )
-                                            delay(800)
-                                            requestVpnAndStart()
-                                        }
-
-                                        Toast.makeText(context, "Профиль «${p.name}» применен!", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = null,
-                                        tint = if (p.id == currentProfileId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            )
-                        }
-                    }
-                }
-            } else {
-                Surface(
-                    onClick = onOpenProfiles,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f),
-                    border = BorderStroke(
-                        1.dp,
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                    ),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.FolderOpen,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Нет серверов",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                "Добавьте или импортируйте профиль во вкладке «Профили»",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Icon(
-                            Icons.Default.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                }
-            }
-
-            // Компактный переключатель режима подключения прямо рядом с кнопкой
-            // "Подключить" — тот же connectionMode, что и подробный блок "Режим
-            // подключения" выше в списке настроек, просто на виду без прокрутки.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = connectionMode == SettingsStore.CONNECTION_MODE_VPN,
-                    onClick = {
-                        if (!tunnelRunning) {
-                            scope.launch { settingsStore.saveConnectionMode(SettingsStore.CONNECTION_MODE_VPN) }
-                        }
-                    },
-                    label = { Text("WG") },
-                    enabled = !tunnelRunning,
-                    modifier = Modifier.weight(1f)
-                )
-                FilterChip(
-                    selected = connectionMode == SettingsStore.CONNECTION_MODE_RAWTUN,
-                    onClick = {
-                        if (!tunnelRunning) {
-                            scope.launch { settingsStore.saveConnectionMode(SettingsStore.CONNECTION_MODE_RAWTUN) }
-                        }
-                    },
-                    label = { Text("Raw") },
-                    enabled = !tunnelRunning,
-                    modifier = Modifier.weight(1f)
-                )
-                FilterChip(
-                    selected = connectionMode == SettingsStore.CONNECTION_MODE_SOCKS,
-                    onClick = {
-                        if (!tunnelRunning) {
-                            scope.launch { settingsStore.saveConnectionMode(SettingsStore.CONNECTION_MODE_SOCKS) }
-                        }
-                    },
-                    label = { Text("SOCKS5") },
-                    enabled = !tunnelRunning,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedButton(
-                    onClick = { showSecretsDialog = true },
-                    modifier = Modifier.height(56.dp),
-                    shape = RoundedCornerShape(18.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (tunnelSecretsMissing) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surface,
-                        contentColor = if (tunnelSecretsMissing) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
-                    ),
-                    border = BorderStroke(
-                        1.dp,
-                        if (tunnelSecretsMissing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Icon(imageVector = Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Секреты", fontWeight = FontWeight.SemiBold)
-                }
-
-                Button(
+            TunnelConnectButton(
+                connected = tunnelRunning && connectionReady && !tunnelReconnecting,
+                connecting = tunnelConnecting || tunnelReconnecting || (tunnelRunning && !connectionReady),
                     onClick = {
                         when {
                             tunnelRunning || tunnelReconnecting || (tunnelConnecting && connectCancelArmed) -> {
@@ -1785,447 +1583,481 @@ fun SettingsTabContent(
                         tunnelRunning ||
                         tunnelReconnecting ||
                         (tunnelConnecting && connectCancelArmed),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = buttonColor,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
-                    Icon(
-                        imageVector = when {
-                            tunnelRunning || tunnelReconnecting || (tunnelConnecting && connectCancelArmed) -> Icons.Default.Stop
-                            else -> Icons.Default.PowerSettingsNew
-                        },
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = when {
-                            tunnelReconnecting -> "Переподключение…"
-                            tunnelConnecting && !tunnelRunning && !connectCancelArmed -> "Подключение…"
-                            tunnelConnecting && !tunnelRunning -> "Отмена"
-                            tunnelRunning -> "Остановить"
-                            cooldownSeconds > 0 -> "Подождите ($cooldownSeconds)"
-                            else -> "Подключить"
-                        },
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-        AccountCard(
-            state = accountState,
-            onTelegramLogin = { account.beginLogin(context, "telegram") },
-            onGoogleLogin = { account.beginLogin(context, "google") },
-            onCancelLogin = account::cancelLogin,
-            onRefresh = account::refreshAccount,
-            onLogout = account::logout,
-        )
-
-        AppSectionCard(
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            OutlinedTextField(
-                value = peerInput,
-                onValueChange = {
-                    var cleaned = it.filter { c -> c != ' ' }
-                    if (PeerAddress.hasExplicitPort(cleaned)) {
-                        cleaned = PeerAddress.host(cleaned)
-                    }
-                    peerInput = cleaned
-                    scheduleSave()
-                },
-                label = { Text("IP сервера или домен") },
-                placeholder = { Text("31.76.102.29") },
-                singleLine = true,
-                isError = !isPeerValid && peerInput.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                )
             )
-
-            OutlinedButton(
-                onClick = { showHashesDialog = true },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (hasInputHashErrors) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                )
-            ) {
-                Icon(Icons.Default.Tag, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("VK Хеши ($filledHashCount)", fontWeight = FontWeight.SemiBold)
-            }
-
-            val errorTexts = hashErrors.filter { !it.contains("короткий") }
-            if (errorTexts.isNotEmpty()) {
-                Text(
-                    text = errorTexts.joinToString(", "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
         }
 
-        // ═══ Мощность + Капча ═══
-        AppSectionCard(
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp)
+            }
+        },
+        footer = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+        OutlinedButton(
+            onClick = { advancedExpanded = !advancedExpanded },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
+                stateDescription = if (advancedExpanded) "Развернуто" else "Свернуто"
+            },
         ) {
-                // — Мощность —
+            Text(if (advancedExpanded) "Расширенные настройки ▴" else "Расширенные настройки ▾")
+        }
+        if (advancedExpanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Existing transport settings, disclosed at the bottom of the tunnel tab.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        "Мощность",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "${currentWorkers.toInt()}",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clearAndSetSemantics { }
-                    )
-                }
-
-                Spacer(Modifier.height(4.dp))
-
-                val maxWorkers = dynamicMaxWorkers
-                val minWorkers = if (vkAccountAuth) 1f else WORKERS_PER_GROUP.toFloat()
-                val workerStep = if (vkAccountAuth) 1f else WORKERS_PER_GROUP.toFloat()
-                val currentWorkersVal = if (vkAccountAuth) {
-                    currentWorkers.coerceIn(1f, maxWorkers).roundToInt().toFloat()
-                } else {
-                    roundToGroup(currentWorkers.coerceIn(minWorkers, maxWorkers), maxWorkers)
-                }
-
-                CompactSteppedSlider(
-                    value = currentWorkersVal,
-                    onValueChange = { raw ->
-                        workersInput = if (vkAccountAuth) {
-                            raw.coerceIn(1f, maxWorkers).roundToInt().toFloat()
-                        } else {
-                            roundToGroup(raw, maxWorkers)
-                        }
-                        scheduleSave()
-                    },
-                    valueRange = minWorkers..maxWorkers,
-                    stepSize = workerStep,
-                    enabled = !tunnelRunning,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // — Разделитель —
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Вход через аккаунт VK",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            "Если анонимный режим не работает — включите и войдите в свой аккаунт VK. Подключение стабильнее.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = vkAccountAuth,
-                        enabled = !tunnelRunning && !vkAuthBusy,
-                        onCheckedChange = { enabled ->
-                            vkAccountAuth = enabled
-                            scope.launch {
-                                settingsStore.saveVkAuthMode(if (enabled) "account" else "anonymous")
-                            }
-                        }
-                    )
-                }
-
-                if (vkAccountAuth) {
-                    Button(
+                    FilterChip(
+                        selected = connectionMode == SettingsStore.CONNECTION_MODE_VPN,
                         onClick = {
-                            scope.launch {
-                                vkAuthBusy = true
-                                try {
-                                    val result = VkAuthWebViewManager.loginOnly(context)
-                                    result.onSuccess {
-                                        vkLoggedIn = true
-                                        Toast.makeText(
-                                            context,
-                                            "Вход в VK выполнен",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }.onFailure {
-                                        vkLoggedIn = VkAuthWebViewManager.hasVkSessionCookie()
-                                        Toast.makeText(
-                                            context,
-                                            "VK: ${it.message ?: "ошибка"}",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                } finally {
-                                    vkAuthBusy = false
-                                }
+                            if (!tunnelRunning) {
+                                scope.launch { settingsStore.saveConnectionMode(SettingsStore.CONNECTION_MODE_VPN) }
                             }
                         },
-                        enabled = !tunnelRunning && !vkAuthBusy,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (vkAuthBusy) "Ожидание входа VK..." else "Войти в VK")
-                    }
-                    if (vkLoggedIn) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF43A047),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                "Вход в VK выполнен",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF43A047),
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                "Вход в VK не выполнен",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
+                        label = { Text("WG") },
+                        enabled = !tunnelRunning,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = connectionMode == SettingsStore.CONNECTION_MODE_RAWTUN,
+                        onClick = {
+                            if (!tunnelRunning) {
+                                scope.launch { settingsStore.saveConnectionMode(SettingsStore.CONNECTION_MODE_RAWTUN) }
+                            }
+                        },
+                        label = { Text("Raw") },
+                        enabled = !tunnelRunning,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = connectionMode == SettingsStore.CONNECTION_MODE_SOCKS,
+                        onClick = {
+                            if (!tunnelRunning) {
+                                scope.launch { settingsStore.saveConnectionMode(SettingsStore.CONNECTION_MODE_SOCKS) }
+                            }
+                        },
+                        label = { Text("SOCKS5") },
+                        enabled = !tunnelRunning,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
+                    OutlinedButton(
+                        onClick = { showSecretsDialog = true },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (tunnelSecretsMissing) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surface,
+                            contentColor = if (tunnelSecretsMissing) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
+                        ),
+                        border = BorderStroke(
+                            1.dp,
+                            if (tunnelSecretsMissing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Icon(imageVector = Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Секреты", fontWeight = FontWeight.SemiBold)
+                    }
 
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            AppSectionCard(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = peerInput,
+                    onValueChange = {
+                        var cleaned = it.filter { c -> c != ' ' }
+                        if (PeerAddress.hasExplicitPort(cleaned)) {
+                            cleaned = PeerAddress.host(cleaned)
+                        }
+                        peerInput = cleaned
+                        scheduleSave()
+                    },
+                    label = { Text("IP сервера или домен") },
+                    placeholder = { Text("31.76.102.29") },
+                    singleLine = true,
+                    isError = !isPeerValid && peerInput.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    )
                 )
 
-                // — Режим VK (анонимный) —
-                AnimatedVisibility(visible = !vkAccountAuth) {
-                Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        "Режим VK",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f)
+                OutlinedButton(
+                    onClick = { showHashesDialog = true },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (hasInputHashErrors) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ProtocolChip("Звонок", useVKCallsAuth, enabled = !tunnelRunning) {
-                            scope.launch { settingsStore.saveVkAnonPath("vkcalls") }
-                        }
-                        ProtocolChip("Капча", !useVKCallsAuth, enabled = !tunnelRunning) {
-                            scope.launch { settingsStore.saveVkAnonPath("legacy") }
-                        }
-                    }
+                ) {
+                    Icon(Icons.Default.Tag, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("VK Хеши ($filledHashCount)", fontWeight = FontWeight.SemiBold)
                 }
-                if (useVKCallsAuth) {
+
+                val errorTexts = hashErrors.filter { !it.contains("короткий") }
+                if (errorTexts.isNotEmpty()) {
                     Text(
-                        "TURN через «Звонок», обычно без капчи. При ошибке — запасной режим «Капча».",
+                        text = errorTexts.joinToString(", "),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 4.dp)
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
+            }
 
-                AnimatedVisibility(
-                    visible = !useVKCallsAuth,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                Column {
-                // — Авто капча —
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        if (autoCaptchaEnabled) "Авто капча" else "Ручная капча",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f)
+            // ═══ Мощность + Капча ═══
+            AppSectionCard(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                    // — Мощность —
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Мощность",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${currentWorkers.toInt()}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clearAndSetSemantics { }
+                        )
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    val maxWorkers = dynamicMaxWorkers
+                    val minWorkers = if (vkAccountAuth) 1f else WORKERS_PER_GROUP.toFloat()
+                    val workerStep = if (vkAccountAuth) 1f else WORKERS_PER_GROUP.toFloat()
+                    val currentWorkersVal = if (vkAccountAuth) {
+                        currentWorkers.coerceIn(1f, maxWorkers).roundToInt().toFloat()
+                    } else {
+                        roundToGroup(currentWorkers.coerceIn(minWorkers, maxWorkers), maxWorkers)
+                    }
+
+                    CompactSteppedSlider(
+                        value = currentWorkersVal,
+                        onValueChange = { raw ->
+                            workersInput = if (vkAccountAuth) {
+                                raw.coerceIn(1f, maxWorkers).roundToInt().toFloat()
+                            } else {
+                                roundToGroup(raw, maxWorkers)
+                            }
+                            scheduleSave()
+                        },
+                        valueRange = minWorkers..maxWorkers,
+                        stepSize = workerStep,
+                        enabled = !tunnelRunning,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    Switch(
-                        checked = autoCaptchaEnabled,
-                        onCheckedChange = { enabled ->
-                            autoCaptchaEnabled = enabled
-                            scope.launch {
-                                if (enabled) {
-                                    settingsStore.saveCaptchaMode("auto")
-                                    settingsStore.saveCaptchaSolveMethod("auto")
-                                } else {
-                                    val mode = if (useWVCaptcha) "wv" else "rjs"
-                                    settingsStore.saveCaptchaMode(mode)
-                                    settingsStore.saveCaptchaSolveMethod(if (mode == "wv" && isManualMode) "manual" else "auto")
+
+                    // — Разделитель —
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Вход через аккаунт VK",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Если анонимный режим не работает — включите и войдите в свой аккаунт VK. Подключение стабильнее.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = vkAccountAuth,
+                            enabled = !tunnelRunning && !vkAuthBusy,
+                            onCheckedChange = { enabled ->
+                                vkAccountAuth = enabled
+                                scope.launch {
+                                    settingsStore.saveVkAuthMode(if (enabled) "account" else "anonymous")
                                 }
                             }
-                        }
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = !autoCaptchaEnabled,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                        // — Разделитель —
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 4.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                         )
+                    }
 
-                        // — Метод обхода капчи —
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Метод обхода капчи",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                ProtocolChip("WBV", useWVCaptcha, enabled = true) {
-                                    useWVCaptcha = true
-                                    isManualMode = wbvManualMode
-                                    scope.launch {
-                                        settingsStore.saveCaptchaMode("wv")
-                                        settingsStore.saveCaptchaSolveMethod(if (wbvManualMode) "manual" else "auto")
+                    if (vkAccountAuth) {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    vkAuthBusy = true
+                                    try {
+                                        val result = VkAuthWebViewManager.loginOnly(context)
+                                        result.onSuccess {
+                                            vkLoggedIn = true
+                                            Toast.makeText(
+                                                context,
+                                                "Вход в VK выполнен",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }.onFailure {
+                                            vkLoggedIn = VkAuthWebViewManager.hasVkSessionCookie()
+                                            Toast.makeText(
+                                                context,
+                                                "VK: ${it.message ?: "ошибка"}",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+                                    } finally {
+                                        vkAuthBusy = false
                                     }
                                 }
-                                ProtocolChip("RJS", !useWVCaptcha, enabled = true, isError = false) {
-                                    useWVCaptcha = false
-                                    isManualMode = false
-                                    scope.launch {
-                                        settingsStore.saveCaptchaMode("rjs")
+                            },
+                            enabled = !tunnelRunning && !vkAuthBusy,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (vkAuthBusy) "Ожидание входа VK..." else "Войти в VK")
+                        }
+                        if (vkLoggedIn) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF43A047),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    "Вход в VK выполнен",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF43A047),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    "Вход в VK не выполнен",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+
+                    // — Режим VK (анонимный) —
+                    AnimatedVisibility(visible = !vkAccountAuth) {
+                    Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Режим VK",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ProtocolChip("Звонок", useVKCallsAuth, enabled = !tunnelRunning) {
+                                scope.launch { settingsStore.saveVkAnonPath("vkcalls") }
+                            }
+                            ProtocolChip("Капча", !useVKCallsAuth, enabled = !tunnelRunning) {
+                                scope.launch { settingsStore.saveVkAnonPath("legacy") }
+                            }
+                        }
+                    }
+                    if (useVKCallsAuth) {
+                        Text(
+                            "TURN через «Звонок», обычно без капчи. При ошибке — запасной режим «Капча».",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = !useVKCallsAuth,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                    Column {
+                    // — Авто капча —
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            if (autoCaptchaEnabled) "Авто капча" else "Ручная капча",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = autoCaptchaEnabled,
+                            onCheckedChange = { enabled ->
+                                autoCaptchaEnabled = enabled
+                                scope.launch {
+                                    if (enabled) {
+                                        settingsStore.saveCaptchaMode("auto")
                                         settingsStore.saveCaptchaSolveMethod("auto")
+                                    } else {
+                                        val mode = if (useWVCaptcha) "wv" else "rjs"
+                                        settingsStore.saveCaptchaMode(mode)
+                                        settingsStore.saveCaptchaSolveMethod(if (mode == "wv" && isManualMode) "manual" else "auto")
                                     }
                                 }
                             }
-                        }
-
-                        // — Разделитель —
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 4.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                         )
+                    }
 
-                        // — Режим обхода —
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Режим обхода",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f)
+                    AnimatedVisibility(
+                        visible = !autoCaptchaEnabled,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                            // — Разделитель —
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (useWVCaptcha) {
-                                    ProtocolChip(
-                                        "РУЧ",
-                                        isManualMode,
-                                        enabled = true,
-                                        isError = false
-                                    ) {
-                                        isManualMode = true
-                                        wbvManualMode = true
-                                        scope.launch { settingsStore.saveWbvCaptchaSolveMethod("manual") }
+
+                            // — Метод обхода капчи —
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Метод обхода капчи",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    ProtocolChip("WBV", useWVCaptcha, enabled = true) {
+                                        useWVCaptcha = true
+                                        isManualMode = wbvManualMode
+                                        scope.launch {
+                                            settingsStore.saveCaptchaMode("wv")
+                                            settingsStore.saveCaptchaSolveMethod(if (wbvManualMode) "manual" else "auto")
+                                        }
                                     }
-                                    ProtocolChip(
-                                        "АВТ",
-                                        !isManualMode,
-                                        enabled = true,
-                                        isError = false
-                                    ) {
+                                    ProtocolChip("RJS", !useWVCaptcha, enabled = true, isError = false) {
+                                        useWVCaptcha = false
                                         isManualMode = false
-                                        wbvManualMode = false
-                                        scope.launch { settingsStore.saveWbvCaptchaSolveMethod("auto") }
+                                        scope.launch {
+                                            settingsStore.saveCaptchaMode("rjs")
+                                            settingsStore.saveCaptchaSolveMethod("auto")
+                                        }
                                     }
-                                } else {
-                                    ProtocolChip(
-                                        "АВТ",
-                                        selected = true,
-                                        enabled = true,
-                                        isError = false
-                                    ) {}
+                                }
+                            }
+
+                            // — Разделитель —
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
+
+                            // — Режим обхода —
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Режим обхода",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (useWVCaptcha) {
+                                        ProtocolChip(
+                                            "РУЧ",
+                                            isManualMode,
+                                            enabled = true,
+                                            isError = false
+                                        ) {
+                                            isManualMode = true
+                                            wbvManualMode = true
+                                            scope.launch { settingsStore.saveWbvCaptchaSolveMethod("manual") }
+                                        }
+                                        ProtocolChip(
+                                            "АВТ",
+                                            !isManualMode,
+                                            enabled = true,
+                                            isError = false
+                                        ) {
+                                            isManualMode = false
+                                            wbvManualMode = false
+                                            scope.launch { settingsStore.saveWbvCaptchaSolveMethod("auto") }
+                                        }
+                                    } else {
+                                        ProtocolChip(
+                                            "АВТ",
+                                            selected = true,
+                                            enabled = true,
+                                            isError = false
+                                        ) {}
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                }
-                }
-                }
-                }
-        }
+                    }
+                    }
+                    }
+                    }
+            }
 
-    }
+        }
+        }
+            }
+        },
+    )
 }
 
 // ═══ Reusable mode chip ═══

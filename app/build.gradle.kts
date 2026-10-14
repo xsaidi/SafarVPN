@@ -22,8 +22,8 @@ android {
         applicationId = "ru.safarvpn.com"
         minSdk = 28
         targetSdk = 35
-        versionCode = 44
-        versionName = "1.4.6"
+        versionCode = 47
+        versionName = "1.4.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

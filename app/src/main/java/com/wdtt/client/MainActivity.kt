@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.FilterList
@@ -268,7 +270,7 @@ private data class NavItem(
 private val navItems = listOf(
     NavItem(0, "Туннель", Icons.Filled.VpnKey, Icons.Outlined.VpnKey),
     NavItem(1, "Серверы", Icons.Filled.Cloud, Icons.Outlined.Cloud),
-    NavItem(2, "Профили", Icons.Filled.FolderOpen, Icons.Outlined.Folder),
+    NavItem(2, "Аккаунт", Icons.Filled.Person, Icons.Outlined.Person),
     NavItem(3, "Обход", Icons.Filled.FilterList, Icons.Outlined.FilterList),
     NavItem(4, "Логи", Icons.Filled.Terminal, Icons.Outlined.Terminal),
 )
@@ -295,7 +297,7 @@ fun MainScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
-    val interfaceRole by settingsStore.interfaceRole.collectAsStateWithLifecycle(initialValue = "admin")
+    val interfaceRole by settingsStore.interfaceRole.collectAsStateWithLifecycle(initialValue = "user")
     val isAdminInterface = interfaceRole == "admin"
     val autoSwitchToLogs by settingsStore.autoSwitchToLogs.collectAsStateWithLifecycle(initialValue = true)
     var pendingSwitchToLogs by remember { mutableStateOf(false) }
@@ -331,7 +333,7 @@ fun MainScreen(
     val pendingFileUri = MainActivity.pendingFileUri.value
     LaunchedEffect(pendingFileUri) {
         if (pendingFileUri != null) {
-            selectedTab = 2
+            selectedTab = 0
         }
     }
 
@@ -452,16 +454,11 @@ fun MainScreen(
                             currentPalette = currentPalette,
                             onPaletteChange = onPaletteChange,
                             onConnectRequested = { pendingSwitchToLogs = true },
-                            onOpenProfiles = { selectedTab = 2 },
-                        )
-                        1 -> ServersTab()
-                        2 -> ProfilesTab(
-                            onProfileApplied = { selectedTab = 0 },
                             importFileUri = MainActivity.pendingFileUri.value,
                             onImportHandled = { MainActivity.pendingFileUri.value = null },
-                            requestCreateProfile = requestCreateProfile,
-                            onCreateProfileHandled = { requestCreateProfile = false }
                         )
+                        1 -> ServersTab()
+                        2 -> com.wdtt.client.account.AccountTab()
                         3 -> ExceptionsTab()
                         4 -> LogsTab()
                     }
@@ -495,7 +492,7 @@ fun MainScreen(
         AlertDialog(
             onDismissRequest = { scope.launch { settingsStore.saveHasSeenWelcomeDialog(true) } },
             title = { Text("SafarVPN") },
-            text = { Text("Добавьте профиль на вкладке «Профили»: импортируйте ссылку, файл или QR-код. Помощь доступна в настройках в разделе «Поддержка».") },
+            text = { Text("Добавьте сервер под кнопкой подключения на вкладке «Туннель»: импортируйте ссылку, файл или QR-код. Помощь доступна в настройках в разделе «Поддержка».") },
             confirmButton = {
                 Button(onClick = { scope.launch { settingsStore.saveHasSeenWelcomeDialog(true) } }) {
                     Text("Понятно")

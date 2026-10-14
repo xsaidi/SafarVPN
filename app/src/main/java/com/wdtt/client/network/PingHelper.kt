@@ -32,15 +32,12 @@ object PingHelper {
             android.util.Log.d("PingHelper", "Binary exists: ${binaryFile.canExecute()}")
 
             // We use the first hash if there are multiple
-            android.util.Log.d("PingHelper", "Raw vkHashes: '${profile.vkHashes}' (len=${profile.vkHashes.length})")
             val parts = profile.vkHashes.split(Regex("[,\\s\\n]+"))
-            android.util.Log.d("PingHelper", "Split parts: $parts")
             val firstHash = parts.firstOrNull { it.isNotBlank() } ?: ""
             if (firstHash.isBlank()) {
-                android.util.Log.e("PingHelper", "No valid hash found in vkHashes='${profile.vkHashes}'")
+                android.util.Log.e("PingHelper", "No valid VK hash found")
                 return@withContext -1L
             }
-            android.util.Log.d("PingHelper", "Hash: ${firstHash.take(8)}... Peer: ${profile.peer}")
 
             val store = SettingsStore(context)
             val manualPorts = store.manualPortsEnabled.first()
@@ -56,7 +53,6 @@ object PingHelper {
                 "-password", profile.password,
                 "-go-dns", goDnsArg,
             )
-            android.util.Log.d("PingHelper", "Command: ${cmd.joinToString(" ") { if (it == profile.password) "***" else it }}")
 
             val processBuilder = ProcessBuilder(cmd)
             processBuilder.directory(context.filesDir)
@@ -75,12 +71,11 @@ object PingHelper {
             launch(Dispatchers.IO) {
                 try {
                     reader.forEachLine { line ->
-                        android.util.Log.d("PingHelper", "OUTPUT: $line")
                         if (line.startsWith("PING_RESULT|")) {
                             val timeStr = line.substringAfter("PING_RESULT|").trim()
                             timeMs = timeStr.toLongOrNull() ?: -1L
                         } else if (line.startsWith("PING_ERROR|")) {
-                            android.util.Log.e("PingHelper", "PING_ERROR: $line")
+                            android.util.Log.e("PingHelper", "Ping reported an error")
                         }
                     }
                 } catch (e: Exception) {
