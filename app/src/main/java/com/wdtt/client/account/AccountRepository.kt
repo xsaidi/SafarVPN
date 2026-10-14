@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
+import com.wdtt.client.ConnectionProfile
+import com.wdtt.client.ProfilesStore
+import com.wdtt.client.SubscriptionImport
 
 private class StaleAccountRequest : IOException("Account request superseded")
 
@@ -37,9 +40,11 @@ private class AccountSession(
 class AccountRepository private constructor(context: Context) {
     private val store = AccountStore(context.applicationContext)
     private val api = AccountApi()
+    private val profiles = ProfilesStore(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val generation = AccountGeneration()
     private val refreshMutex = Mutex()
+    private val profilesMutex = Mutex()
     private var session: AccountSession? = restoreSession()
     private var pending = store.pending()?.takeIf {
         it.provider in setOf("google", "telegram") && MobileAuthProtocol.isOpaque(it.state) &&
@@ -58,6 +63,7 @@ class AccountRepository private constructor(context: Context) {
     init {
         if (pending == null) runCatching { store.savePending(null) }
         pending?.let { scheduleExpiry(it, generation.current()) }
+        if (session == null || session?.toSubscription()?.isActive == false) clearAccountProfiles()
     }
 
     fun beginLogin(context: Context, provider: String) {
@@ -208,6 +214,7 @@ class AccountRepository private constructor(context: Context) {
             mutableState.value = AccountUiState(error = if (cleared) null else
                 "Не удалось очистить хранилище аккаунта. Повторите выход.")
         }
+        clearAccountProfiles()
         previousSession?.let { revokeRemotely(it.refresh) }
         previousLogin?.let { cancelRemotely(it) }
     }
@@ -216,10 +223,13 @@ class AccountRepository private constructor(context: Context) {
         val gen = generation.current()
         var login: PendingLogin? = null
         var signedIn = false
+        var inactive = false
         generation.apply(gen) {
             login = pending
             signedIn = session != null
+            inactive = session?.toSubscription()?.isActive == false
         }
+        if (inactive) clearAccountProfiles()
         val active = login
         if (active != null && System.currentTimeMillis() >= active.expiresAt) {
             cancelLogin("Время ожидания входа истекло. Попробуйте снова.")
@@ -266,14 +276,25 @@ class AccountRepository private constructor(context: Context) {
                 }
             } catch (_: Exception) { failed = true }
             try {
-                val subscription = safeSubscription(authorized("/auth/mobile/subscription", gen))
-                generation.apply(gen) {
-                    val current = session ?: throw StaleAccountRequest()
-                    val updated = AccountSession(current.access, current.refresh, current.profile,
-                        subscription, System.currentTimeMillis())
-                    store.write("auth", updated.json())
-                    session = updated
-                    mutableState.value = mutableState.value.copy(subscription = updated.toSubscription())
+                val owner = currentSession(gen).profile.getLong("id")
+                val response = authorized("/auth/mobile/subscription/profiles", gen)
+                val subscription = safeSubscription(response)
+                val configuration = response.optJSONObject("configuration")
+                val active = subscription.optJSONObject("subscription")?.optBoolean("is_active") == true
+                check(active == (configuration != null))
+                val parsed = configuration?.let {
+                    SubscriptionImport.parsePayload(it.toString()) ?: throw IOException("Invalid account profiles")
+                }
+                profilesMutex.withLock {
+                    profiles.syncAccountSubscription(owner, parsed) { action -> generation.apply(gen, action) }
+                    generation.apply(gen) {
+                        val current = session ?: throw StaleAccountRequest()
+                        val updated = AccountSession(current.access, current.refresh, current.profile,
+                            subscription, System.currentTimeMillis())
+                        store.write("auth", updated.json())
+                        session = updated
+                        mutableState.value = mutableState.value.copy(subscription = updated.toSubscription())
+                    }
                 }
             } catch (_: Exception) { failed = true }
             generation.apply(gen) {
@@ -329,7 +350,36 @@ class AccountRepository private constructor(context: Context) {
                 runCatching { store.clear() }
                 mutableState.value = AccountUiState(error = "Сессия завершена. Войдите в аккаунт снова.")
             }
+            clearAccountProfiles()
         }
+    }
+
+    private fun clearAccountProfiles() {
+        scope.launch {
+            runCatching {
+                profilesMutex.withLock {
+                    // A queued logout may run after a new login starts. Inspect current authority under
+                    // the same lock instead of skipping cleanup merely because its generation changed.
+                    profiles.syncAccountSubscription(null, null) { action ->
+                        synchronized(generation) {
+                            if (session?.toSubscription()?.isActive != true) { action(); true } else false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Selecting an account profile must use the same logout fence as downloading it. */
+    internal fun profileGuard(profile: ConnectionProfile): ((() -> Unit) -> Boolean)? {
+        val gen = generation.current()
+        var valid = false
+        generation.apply(gen) {
+            val signedIn = session
+            valid = signedIn?.toSubscription()?.isActive == true &&
+                AccountProfiles.prepare(signedIn.profile.getLong("id"), listOf(profile)).single().id == profile.id
+        }
+        return if (valid) ({ action -> generation.apply(gen, action) }) else null
     }
 
     private fun scheduleExpiry(login: PendingLogin, gen: Long) {

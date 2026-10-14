@@ -509,6 +509,46 @@ class SettingsStore(context: Context) {
         }
     }
 
+    internal suspend fun syncAccountSelection(profiles: List<ConnectionProfile>, applyIfCurrent: (() -> Unit) -> Boolean) {
+        dataStore.edit { prefs ->
+            applyIfCurrent {
+                val id = prefs[CURRENT_PROFILE_ID] ?: ""
+                if (id.startsWith(com.wdtt.client.account.AccountProfiles.PREFIX)) {
+                    val profile = profiles.find { it.id == id }
+                    if (profile == null) {
+                        prefs.remove(CURRENT_PROFILE_ID); prefs.remove(CURRENT_PROFILE_NAME)
+                        prefs.remove(PEER); prefs.remove(VK_HASHES); prefs.remove(SECONDARY_VK_HASH)
+                        prefs.remove(CONNECTION_PASSWORD); prefs.remove(CONNECTION_PASSWORD_ENCRYPTED)
+                    } else {
+                        prefs[CURRENT_PROFILE_NAME] = profile.name
+                        prefs[PEER] = profile.peer
+                        prefs[VK_HASHES] = if (profile.useGlobalHashes) prefs[GLOBAL_VK_HASHES]?.ifBlank { profile.vkHashes } ?: profile.vkHashes else profile.vkHashes
+                        prefs[WORKERS_PER_HASH] = profile.workersPerHash
+                        prefs[LISTEN_PORT] = profile.listenPort
+                        prefs.putSecret(CONNECTION_PASSWORD_ENCRYPTED, CONNECTION_PASSWORD, profile.password)
+                    }
+                }
+            }
+        }
+    }
+
+    internal suspend fun applyAccountProfile(profile: ConnectionProfile, applyIfCurrent: (() -> Unit) -> Boolean) {
+        dataStore.edit { prefs ->
+            check(applyIfCurrent {
+                prefs[CURRENT_PROFILE_ID] = profile.id
+                prefs[CURRENT_PROFILE_NAME] = profile.name
+                prefs[PEER] = profile.peer
+                prefs[VK_HASHES] = if (profile.useGlobalHashes) prefs[GLOBAL_VK_HASHES]?.ifBlank { profile.vkHashes } ?: profile.vkHashes else profile.vkHashes
+                prefs[SECONDARY_VK_HASH] = ""
+                prefs[WORKERS_PER_HASH] = profile.workersPerHash
+                prefs[PROTOCOL] = "udp"
+                prefs[LISTEN_PORT] = profile.listenPort
+                prefs[SNI] = ""
+                prefs.putSecret(CONNECTION_PASSWORD_ENCRYPTED, CONNECTION_PASSWORD, profile.password)
+            }) { "Сессия аккаунта завершена" }
+        }
+    }
+
     suspend fun saveUpdateState(lastCheckAt: Long, latestVersion: String, error: String) {
         dataStore.edit { prefs ->
             prefs[UPDATE_LAST_CHECK_AT] = lastCheckAt

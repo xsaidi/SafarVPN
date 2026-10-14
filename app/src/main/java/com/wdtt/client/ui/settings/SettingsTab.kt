@@ -1617,7 +1617,11 @@ fun SettingsTabContent(
                                 onClick = {
                                     expanded = false
                                     scope.launch {
-                                        profilesStore.applyProfile(context, p.id)
+                                        try { profilesStore.applyProfile(context, p.id) }
+                                        catch (_: Exception) {
+                                            Toast.makeText(context, "Не удалось выбрать профиль. Обновите подписку аккаунта.", Toast.LENGTH_LONG).show()
+                                            return@launch
+                                        }
 
                                         peerInput = PeerAddress.host(settingsStore.peer.first())
                                         portInput = settingsStore.listenPort.first().toString()

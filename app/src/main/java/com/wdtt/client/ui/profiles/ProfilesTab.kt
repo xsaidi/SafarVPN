@@ -46,6 +46,7 @@ import androidx.compose.ui.text.PlatformTextStyle
 import com.wdtt.client.PeerAddress
 import com.wdtt.client.ConnectionProfile
 import com.wdtt.client.ProfilesStore
+import com.wdtt.client.account.AccountRepository
 import android.widget.Toast
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -127,6 +128,8 @@ fun ProfilesTab(
     val scope = rememberCoroutineScope()
     val profilesStore = remember { ProfilesStore(context) }
     val settingsStore = remember { SettingsStore(context) }
+    val account = remember { AccountRepository.get(context) }
+    val accountState by account.state.collectAsStateWithLifecycle()
 
     val profiles by profilesStore.profiles.collectAsStateWithLifecycle(initialValue = emptyList())
     val groups by profilesStore.groups.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -340,6 +343,10 @@ fun ProfilesTab(
     var refreshingSubId by remember { mutableStateOf<String?>(null) }
     var deleteSubTarget by remember { mutableStateOf<ProfileSubscription?>(null) }
     var selectedFilterGroup by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(groups, accountState.refreshing) {
+        if (!accountState.refreshing && selectedFilterGroup == com.wdtt.client.account.AccountProfiles.GROUP_ID &&
+            groups.none { it.id == selectedFilterGroup }) selectedFilterGroup = null
+    }
     var moveToGroupTarget by rememberSaveable { mutableStateOf<ConnectionProfile?>(null) }
     var deleteTarget by rememberSaveable { mutableStateOf<ConnectionProfile?>(null) }
     var pendingDeletes by remember { mutableStateOf(setOf<String>()) }
@@ -1235,26 +1242,40 @@ fun ProfilesTab(
             }
         }
 
+        if (accountState.profile != null && (accountState.refreshing || accountState.error != null)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (accountState.refreshing) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text(if (accountState.refreshing) "Обновляем подписку аккаунта…" else accountState.error.orEmpty(),
+                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                if (!accountState.refreshing) TextButton(onClick = account::refreshAccount) { Text("Повторить") }
+            }
+        }
+
         visibleSubscriptions.forEach { sub ->
             SubscriptionInfoCard(
                 sub = sub,
-                isRefreshing = refreshingSubId == sub.id,
+                isRefreshing = if (sub.isAccount) accountState.refreshing else refreshingSubId == sub.id,
                 onRefresh = {
-                    refreshingSubId = sub.id
-                    scope.launch {
-                        val result = profilesStore.refreshSubscription(sub.id)
-                        refreshingSubId = null
-                        result.fold(
-                            onSuccess = { count ->
-                                Toast.makeText(context, "Обновлено профилей: $count", Toast.LENGTH_SHORT).show()
-                            },
-                            onFailure = { e ->
-                                Toast.makeText(context, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
-                            }
-                        )
+                    if (sub.isAccount) {
+                        account.refreshAccount()
+                    } else {
+                        refreshingSubId = sub.id
+                        scope.launch {
+                            val result = profilesStore.refreshSubscription(sub.id)
+                            refreshingSubId = null
+                            result.fold(
+                                onSuccess = { count ->
+                                    Toast.makeText(context, "Обновлено профилей: $count", Toast.LENGTH_SHORT).show()
+                                },
+                                onFailure = { e ->
+                                    Toast.makeText(context, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            )
+                        }
                     }
                 },
-                onDelete = { deleteSubTarget = sub },
+                onDelete = if (sub.isAccount) null else ({ deleteSubTarget = sub }),
                 onOpenGroup = if (selectedFilterGroup == null && sub.groupId.isNotBlank()) {
                     { selectedFilterGroup = sub.groupId }
                 } else {
@@ -1450,7 +1471,11 @@ fun ProfilesTab(
                         tonalElevation = if (isActive || hasIssue) 0.dp else null,
                         modifier = Modifier.clickable {
                             scope.launch {
-                                profilesStore.applyProfile(context = context, id = profile.id)
+                                try { profilesStore.applyProfile(context = context, id = profile.id) }
+                                catch (_: Exception) {
+                                    Toast.makeText(context, "Не удалось выбрать профиль. Обновите подписку аккаунта.", Toast.LENGTH_LONG).show()
+                                    return@launch
+                                }
                                 Toast.makeText(context, "Применено", Toast.LENGTH_SHORT).show()
                                 onProfileApplied()
                             }

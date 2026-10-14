@@ -12,7 +12,8 @@ $env:GOPATH = Join-Path $rootDir '.build-tools/go-work'
 $env:PATH = (Join-Path $rootDir '.build-tools/go/bin') + ';' + $env:JAVA_HOME + '/bin;' + $env:PATH
 Push-Location $rootDir
 try {
-    $taskBuildTasks = if ($RunTests) { @(':app:testDebugUnitTest', ':app:assembleRelease') } else { @(':app:assembleRelease') }
+    $taskBuildTasks = @(':app:assembleRelease')
+    if ($RunTests) { $taskBuildTasks = @(':app:testDebugUnitTest', ':app:assembleRelease') }
     $localGradle = Join-Path $rootDir '.build-tools/gradle-9.1.0/bin/gradle.bat'
     if (Test-Path -LiteralPath $localGradle) {
         & $localGradle @taskBuildTasks --no-daemon --max-workers=2 '-Pkotlin.compiler.execution.strategy=in-process' '-PgoogleMavenUrl=https://dl-ssl.google.com/dl/android/maven2/'

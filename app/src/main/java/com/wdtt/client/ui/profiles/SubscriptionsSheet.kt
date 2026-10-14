@@ -133,7 +133,7 @@ fun SubscriptionInfoCard(
     sub: ProfileSubscription,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
     onOpenGroup: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -184,7 +184,7 @@ fun SubscriptionInfoCard(
                     )
                 }
                 Row {
-                    IconButton(onClick = onRefresh, enabled = !isRefreshing, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = onRefresh, enabled = !isRefreshing, modifier = Modifier.size(48.dp)) {
                         if (isRefreshing) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
@@ -200,7 +200,7 @@ fun SubscriptionInfoCard(
                             )
                         }
                     }
-                    IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                    if (onDelete != null) IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
                         Icon(
                             Icons.Default.Delete,
                             contentDescription = "Удалить подписку",
@@ -210,6 +210,8 @@ fun SubscriptionInfoCard(
                     }
                 }
             }
+
+            if (sub.isAccount) Text("Из аккаунта · покупка через бота", style = MaterialTheme.typography.bodySmall, color = contentColor)
 
             if (sub.description.isNotBlank()) {
                 Text(

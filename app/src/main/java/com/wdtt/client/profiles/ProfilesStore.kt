@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import com.wdtt.client.account.AccountProfiles
 
 data class ConnectionProfile(
     val id: String,
@@ -44,7 +45,9 @@ data class ProfileSubscription(
     val remoteUpdatedAt: String = "",
     val lastSyncAt: Long = 0L,
     val lastSyncError: String = ""
-)
+) {
+    val isAccount: Boolean get() = url == AccountProfiles.URL
+}
 
 class ProfilesStore(context: Context) {
     private val appContext = context.applicationContext
@@ -80,10 +83,75 @@ class ProfilesStore(context: Context) {
         private fun subRemoteUpdatedKey(id: String) = stringPreferencesKey("sub_remote_updated_$id")
         private fun subLastSyncKey(id: String) = androidx.datastore.preferences.core.longPreferencesKey("sub_last_sync_$id")
         private fun subLastErrorKey(id: String) = stringPreferencesKey("sub_last_error_$id")
+
+        internal fun mergeAccountPreferences(
+            prefs: androidx.datastore.preferences.core.MutablePreferences,
+            incoming: List<ConnectionProfile>, parsed: ParsedRemoteSubscription?, encrypted: Map<String, String>,
+        ) {
+            val ids = (prefs[idsKey()] ?: "").split(',').filter { it.isNotBlank() }.toMutableList()
+            val removed = ids.filter { it.startsWith(AccountProfiles.PREFIX) && incoming.none { p -> p.id == it } }
+            for (id in removed) {
+                ids.remove(id)
+                listOf(nameKey(id), peerKey(id), hashesKey(id), passKey(id), groupIdKey(id)).forEach { prefs.remove(it) }
+                prefs.remove(workersKey(id)); prefs.remove(portKey(id)); prefs.remove(trafficKey(id)); prefs.remove(useGlobalHashesKey(id))
+            }
+            for (p in incoming) {
+                if (p.id !in ids) ids.add(p.id)
+                prefs[nameKey(p.id)] = p.name
+                prefs[peerKey(p.id)] = p.peer
+                prefs[hashesKey(p.id)] = p.vkHashes
+                prefs[workersKey(p.id)] = p.workersPerHash
+                prefs[portKey(p.id)] = p.listenPort
+                prefs[passKey(p.id)] = encrypted.getValue(p.id)
+                prefs[groupIdKey(p.id)] = p.groupId
+                prefs[useGlobalHashesKey(p.id)] = p.useGlobalHashes
+                if (prefs[trafficKey(p.id)] == null) prefs[trafficKey(p.id)] = 0.0
+            }
+            prefs[idsKey()] = ids.joinToString(",")
+            val groups = (prefs[groupsIdsKey()] ?: "").split(',').filter { it.isNotBlank() }.toMutableList()
+            val subs = (prefs[subscriptionsIdsKey()] ?: "").split(',').filter { it.isNotBlank() }.toMutableList()
+            val id = AccountProfiles.SUBSCRIPTION_ID
+            if (parsed == null) {
+                groups.remove(AccountProfiles.GROUP_ID); subs.remove(id)
+                prefs.remove(groupNameKey(AccountProfiles.GROUP_ID))
+                listOf(subNameKey(id), subUrlKey(id), subDescKey(id), subGroupIdKey(id), subRemoteUpdatedKey(id), subLastErrorKey(id)).forEach { prefs.remove(it) }
+                prefs.remove(subLastSyncKey(id)); prefs.remove(subTrafficLimitKey(id)); prefs.remove(subRemoteTrafficKey(id))
+            } else {
+                if (AccountProfiles.GROUP_ID !in groups) groups.add(AccountProfiles.GROUP_ID)
+                if (id !in subs) subs.add(id)
+                val name = parsed.subscriptionName?.takeIf { it.isNotBlank() } ?: "Подписка SafarVPN"
+                prefs[groupNameKey(AccountProfiles.GROUP_ID)] = name
+                prefs[subNameKey(id)] = name
+                prefs[subUrlKey(id)] = AccountProfiles.URL
+                prefs[subDescKey(id)] = parsed.description
+                prefs[subGroupIdKey(id)] = AccountProfiles.GROUP_ID
+                prefs[subRemoteUpdatedKey(id)] = parsed.updatedAt
+                prefs[subLastSyncKey(id)] = System.currentTimeMillis()
+                prefs[subLastErrorKey(id)] = ""
+            }
+            prefs[groupsIdsKey()] = groups.joinToString(",")
+            prefs[subscriptionsIdsKey()] = subs.joinToString(",")
+        }
     }
 
     private val dataStore = appContext.dataStore
     private val secureStore = SecureStringStore(appContext)
+
+    /** One atomic edit, fenced by the auth generation even after network/process lifecycle delays. */
+    internal suspend fun syncAccountSubscription(
+        owner: Long?, parsed: ParsedRemoteSubscription?,
+        applyIfCurrent: (() -> Unit) -> Boolean,
+    ) {
+        val incoming = if (parsed != null) AccountProfiles.prepare(requireNotNull(owner), parsed.profiles) else emptyList()
+        // Encrypt before touching any saved profiles; failures preserve the previous complete snapshot.
+        val encrypted = incoming.associate { it.id to secureStore.encrypt(it.password) }
+        dataStore.edit { prefs ->
+            applyIfCurrent {
+                mergeAccountPreferences(prefs, incoming, parsed, encrypted)
+            }
+        }
+        settings.syncAccountSelection(incoming, applyIfCurrent)
+    }
 
     val profiles: Flow<List<ConnectionProfile>> = dataStore.data
         .catch { emit(emptyPreferences()) }
@@ -228,6 +296,7 @@ class ProfilesStore(context: Context) {
 
     suspend fun refreshSubscription(id: String): Result<Int> = withContext(Dispatchers.IO) {
         val sub = getSubscriptionOnce(id) ?: return@withContext Result.failure(IllegalStateException("Подписка не найдена"))
+        if (sub.isAccount) return@withContext Result.failure(IllegalStateException("Обновите подписку через аккаунт"))
         if (sub.url.isBlank()) return@withContext Result.failure(IllegalStateException("Адрес подписки пуст"))
 
         try {
@@ -274,7 +343,7 @@ class ProfilesStore(context: Context) {
             if (intervalHours == SettingsStore.SUB_AUTO_REFRESH_NEVER) {
                 return@withContext SubscriptionAutoRefreshResult(0, 0, 0)
             }
-            val all = subscriptions.first()
+            val all = subscriptions.first().filterNot { it.isAccount }
             if (all.isEmpty()) return@withContext SubscriptionAutoRefreshResult(0, 0, 0)
 
             val now = System.currentTimeMillis()
@@ -372,7 +441,7 @@ class ProfilesStore(context: Context) {
     suspend fun findGroupByName(name: String): ProfileGroup? {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return null
-        return groups.first().find { it.name.equals(trimmed, ignoreCase = true) }
+        return groups.first().find { it.id != AccountProfiles.GROUP_ID && it.name.equals(trimmed, ignoreCase = true) }
     }
 
     suspend fun deleteProfilesInGroup(groupId: String) = withContext(Dispatchers.IO) {
@@ -473,6 +542,12 @@ class ProfilesStore(context: Context) {
     // Apply profile: save to SettingsStore
     suspend fun applyProfile(context: Context, id: String) {
         val p = getProfileOnce(id) ?: return
+        if (id.startsWith(AccountProfiles.PREFIX)) {
+            val guard = com.wdtt.client.account.AccountRepository.get(context).profileGuard(p)
+                ?: throw IllegalStateException("Войдите в аккаунт с активной подпиской")
+            settings.applyAccountProfile(p, guard)
+            return
+        }
         // save to settings
         val finalHashes = if (p.useGlobalHashes) {
             val global = settings.globalVkHashes.first()
