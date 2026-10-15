@@ -1,75 +1,52 @@
 package com.wdtt.client.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/** State comes from TunnelManager; tapping never sets a local connected state. */
+/** Presentation only: readiness and start/stop gating remain in TunnelManager/SettingsTab. */
 @Composable
-internal fun TunnelConnectButton(
-    connected: Boolean,
-    connecting: Boolean,
-    onClick: () -> Unit,
-    enabled: Boolean,
-) {
-    val label = when {
-        connecting -> "Подключение..."
-        connected -> "Подключено"
-        else -> "Подключиться"
+internal fun TunnelConnectButton(connected: Boolean, connecting: Boolean, onClick: () -> Unit, enabled: Boolean) {
+    val colors = MaterialTheme.colorScheme
+    val status = when { connecting -> "Подключение…"; connected -> "Подключено"; else -> "Не подключено" }
+    val statusColor = when {
+        connected -> if (colors.background.luminance() < 0.22f) Color(0xFF86EBA5) else Color(0xFF146C43)
+        else -> colors.onSurfaceVariant
     }
-    val accent = when {
-        connecting -> Color(0xFFFFCC80)
-        connected -> Color(0xFF57E4C3)
-        else -> Color(0xFFA9BACB)
-    }
-    BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        val diameter = minOf(maxWidth, 280.dp)
-        Box(Modifier.size(diameter), contentAlignment = Alignment.Center) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
+            Surface(shape = CircleShape, color = statusColor, modifier = Modifier.size(8.dp)) {}
+            Text(status, color = statusColor, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+        }
+        Box(Modifier.size(184.dp), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
-                val radius = size.minDimension / 2
-                drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = if (connected || connecting) .27f else .08f), Color.Transparent)), radius)
-                listOf(.96f, .89f, .80f, .75f).forEachIndexed { index, ratio ->
-                    drawCircle(accent.copy(alpha = .12f + index * .10f), radius * ratio, style = Stroke((if (index == 3) 2.dp else 1.dp).toPx()))
-                }
+                drawCircle(colors.primary.copy(alpha = 0.65f), size.minDimension / 2 - 2.dp.toPx(), style = Stroke(1.dp.toPx()))
             }
-            Button(
-                onClick = onClick,
-                enabled = enabled,
-                modifier = Modifier.size(diameter * .70f).semantics {
-                    stateDescription = label
-                    contentDescription = if (connected) "Отключить VPN" else if (connecting) "Отменить подключение VPN" else "Подключить VPN"
-                    liveRegion = LiveRegionMode.Polite
-                },
-                shape = CircleShape,
-                contentPadding = PaddingValues(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (connected) Color(0xFF063D38) else Color(0xFF202E3D),
-                    contentColor = accent,
-                    disabledContainerColor = Color(0xFF202E3D),
-                    disabledContentColor = accent.copy(alpha = .6f),
-                ),
-                border = androidx.compose.foundation.BorderStroke(2.dp, accent.copy(alpha = if (enabled) .8f else .3f)),
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (connecting) CircularProgressIndicator(Modifier.size(28.dp), color = accent, strokeWidth = 2.dp)
-                    else Icon(if (connected) Icons.Default.Lock else Icons.Default.PowerSettingsNew, null, Modifier.size(32.dp))
-                    Text(label, textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
+            Button(onClick = onClick, enabled = enabled, modifier = Modifier.size(164.dp).semantics {
+                stateDescription = status
+                contentDescription = if (connected) "Отключить VPN" else if (connecting) "Отменить подключение VPN" else "Подключить VPN"
+            }, shape = CircleShape, contentPadding = PaddingValues(24.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.surface, contentColor = colors.primary,
+                    disabledContainerColor = colors.surface, disabledContentColor = colors.onSurfaceVariant),
+                border = BorderStroke(2.dp, if (enabled) colors.primary else colors.outlineVariant)) {
+                if (connecting) CircularProgressIndicator(Modifier.size(42.dp), color = colors.primary, strokeWidth = 3.dp)
+                else Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(52.dp))
             }
         }
+        Text(if (connected) "Нажмите, чтобы отключить" else if (connecting) "Нажмите, чтобы отменить" else "Нажмите, чтобы подключиться",
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
 }

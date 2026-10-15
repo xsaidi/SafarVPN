@@ -22,8 +22,8 @@ android {
         applicationId = "ru.safarvpn.com"
         minSdk = 28
         targetSdk = 35
-        versionCode = 47
-        versionName = "1.4.9"
+        versionCode = 58
+        versionName = "1.4.20"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -174,6 +174,7 @@ tasks.named("preBuild").configure {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")

@@ -305,9 +305,63 @@ class AccountRepository private constructor(context: Context) {
         }
     }
 
-    private suspend fun authorized(path: String, gen: Long): JSONObject {
+    internal suspend fun billingRequest(owner: Long, path: String, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
+        val history = body == null && Regex("^/balance/transactions\\?page=[1-9][0-9]{0,5}&per_page=20$").matches(path)
+        val paymentStatus = body == null && Regex("^/balance/pending-payments/[a-z][a-z0-9_]{0,31}/([1-9][0-9]{0,18}|latest)$").matches(path)
+        check(history || paymentStatus || (path == "/balance/topup" && body != null) || path in setOf("/auth/mobile/billing", "/auth/mobile/billing/topup", "/auth/mobile/billing/purchase"))
+        val gen = generation.current()
+        check(currentSession(gen).profile.getLong("id") == owner)
+        val result = authorized(path, gen, body)
+        check(currentSession(gen).profile.getLong("id") == owner)
+        result
+    }
+
+    internal fun pendingServerOperation(owner: Long): JSONObject? = synchronized(generation) {
+        check(session?.profile?.getLong("id") == owner)
+        store.read("server_operation")?.takeIf { it.optLong("owner") == owner }
+    }
+
+    internal fun saveServerOperation(owner: Long, value: JSONObject?) = synchronized(generation) {
+        check(session?.profile?.getLong("id") == owner)
+        store.write("server_operation", value?.put("owner", owner))
+    }
+
+    internal fun currentDeviceUnbindPending(deviceId: String): Boolean = synchronized(generation) {
+        val owner = session?.profile?.getLong("id") ?: return@synchronized false
+        val operation = store.read("server_operation") ?: return@synchronized false
+        operation.optLong("owner") == owner && operation.optString("kind") == "unbind" &&
+            operation.optString("device_id") == deviceId
+    }
+
+    internal fun pendingDeviceLimit(owner: Long): JSONObject? = synchronized(generation) {
+        check(session?.profile?.getLong("id") == owner)
+        store.read("device_limit_operation")?.takeIf { it.optLong("owner") == owner }
+    }
+
+    internal fun saveDeviceLimit(owner: Long, value: JSONObject?) = synchronized(generation) {
+        check(session?.profile?.getLong("id") == owner)
+        store.write("device_limit_operation", value?.put("owner", owner))
+    }
+
+    internal suspend fun serverRequest(owner: Long, suffix: String, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
+        check((body == null && suffix in setOf("/status", "/devices", "/device-limit")) ||
+            (body != null && suffix in setOf("/operations", "/device-limit/quote", "/device-limit/operations")) ||
+            (body == null && Regex("^/(device-limit/)?operations/[a-f0-9-]{36}$").matches(suffix)))
+        val gen = generation.current()
+        check(currentSession(gen).profile.getLong("id") == owner)
+        try {
+            val result = authorized("/auth/mobile/server/v1$suffix", gen, body)
+            check(currentSession(gen).profile.getLong("id") == owner)
+            result
+        } catch (error: AccountApiException) {
+            if (error.status == 403) refreshAccount()
+            throw error
+        }
+    }
+
+    private suspend fun authorized(path: String, gen: Long, body: JSONObject? = null): JSONObject {
         val current = currentSession(gen)
-        try { return api.request(path, accessToken = current.access) }
+        try { return api.request(path, body, accessToken = current.access) }
         catch (error: AccountApiException) {
             if (error.accountInactive) expireSession(gen)
             if (error.status != 401) throw error
@@ -328,7 +382,7 @@ class AccountRepository private constructor(context: Context) {
                 }
             }
         }
-        try { return api.request(path, accessToken = currentSession(gen).access) }
+        try { return api.request(path, body, accessToken = currentSession(gen).access) }
         catch (error: AccountApiException) {
             if (error.status == 401 || error.accountInactive) expireSession(gen)
             throw error

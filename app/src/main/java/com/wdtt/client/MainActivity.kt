@@ -294,6 +294,8 @@ fun MainScreen(
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    val deviceAccount by AccountRepository.get(context).state.collectAsStateWithLifecycle()
+    val serverDevices = com.wdtt.client.account.rememberServerDevices(deviceAccount.profile?.userId, deviceAccount.subscription?.isActive)
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
@@ -438,6 +440,7 @@ fun MainScreen(
                         }
                     }
             ) {
+                androidx.compose.runtime.CompositionLocalProvider(com.wdtt.client.account.LocalServerDevices provides serverDevices) {
                 androidx.compose.animation.Crossfade(
                     targetState = selectedTab,
                     modifier = Modifier
@@ -464,6 +467,7 @@ fun MainScreen(
                     }
                 }
 
+                }
                 ProxyNavigationBar(
                     navItems = activeNavItems,
                     selectedTab = selectedTab,

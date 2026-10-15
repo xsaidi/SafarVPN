@@ -160,7 +160,8 @@ object SubscriptionImport {
             password = pass,
             trafficMb = traffic.coerceAtLeast(0.0),
             groupId = "",
-            useGlobalHashes = hashes.isBlank()
+            useGlobalHashes = hashes.isBlank(),
+            nodeId = if (jsonObj.has("node_id")) jsonObj.getLong("node_id").also { require(it > 0) } else null,
         )
     }
 

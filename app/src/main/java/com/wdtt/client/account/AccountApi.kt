@@ -8,7 +8,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
-internal class AccountApiException(val status: Int, val accountInactive: Boolean = false) : IOException("Account request failed")
+internal class AccountApiException(val status: Int, val accountInactive: Boolean = false, val reason: String? = null,
+    val retryable: Boolean = false) : IOException("Account request failed")
 
 internal class AccountApi {
     // Never forward bearer credentials or PKCE to a redirected host.
@@ -25,17 +26,27 @@ internal class AccountApi {
             if (!response.isSuccessful) {
                 // Classify only fixed backend reasons. Raw provider/server errors never leave this method.
                 var inactive = false
-                if (response.code == 403) runCatching {
+                var reason: String? = null
+                var retryable = false
+                runCatching {
                     val source = response.body?.source() ?: return@runCatching
                     source.request(8193)
                     if (source.buffer.size <= 8192) {
                         val error = JSONObject(source.readUtf8())
-                        inactive = error.optJSONObject("detail")?.optString("code") in
+                        reason = error.optString("detail").takeIf { it in setOf("price_changed", "insufficient_balance", "billing_restricted") }
+                        if (path.startsWith("/auth/mobile/server/v1/")) {
+                            reason = error.optString("code").takeIf { it in setOf("unauthorized", "forbidden", "access_revoked",
+                                "no_subscription", "not_found", "device_limit", "unbind_pending", "request_conflict",
+                                "inventory_pending", "unavailable", "invalid_request", "invalid_device", "quote_expired",
+                                "occupied_devices", "limit_change_pending", "insufficient_balance") }
+                            retryable = error.optBoolean("retryable", false)
+                        }
+                        inactive = response.code == 403 && (error.optJSONObject("detail")?.optString("code") in
                             setOf("account_deleted", "blacklisted") ||
-                            error.opt("detail") == "User account is not active"
+                            error.opt("detail") == "User account is not active")
                     }
                 }
-                throw AccountApiException(response.code, inactive)
+                throw AccountApiException(response.code, inactive, reason, retryable)
             }
             if (response.code == 204) return JSONObject()
             // Read a bounded body; do not include response text/URLs in errors or logs.

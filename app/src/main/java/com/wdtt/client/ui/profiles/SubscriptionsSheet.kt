@@ -1,4 +1,6 @@
 package com.wdtt.client.ui
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -129,7 +131,6 @@ fun DeleteSubscriptionDialog(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubscriptionInfoCard(
     sub: ProfileSubscription,
@@ -138,134 +139,39 @@ fun SubscriptionInfoCard(
     onDelete: (() -> Unit)?,
     onPingAll: () -> Unit,
     isPinging: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    statusLabel: String? = null,
+    active: Boolean = false,
+    expiresAt: String? = null,
 ) {
-    val uriHandler = LocalUriHandler.current
-    val hasLimit = sub.trafficLimitMb > 0
-    val hasTraffic = sub.remoteTrafficUsedMb > 0 || hasLimit
-    val progress = if (hasLimit && sub.trafficLimitMb > 0) {
-        (sub.remoteTrafficUsedMb / sub.trafficLimitMb).toFloat().coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-
-    val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-        modifier = modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        Icons.Default.RssFeed,
-                        contentDescription = null,
-                        tint = contentColor,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Text(
-                        sub.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = contentColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+    val colors = MaterialTheme.colorScheme
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(sub.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                statusLabel?.let { label ->
+                    Text(label, style = MaterialTheme.typography.labelLarge,
+                        color = if (active) { if (colors.background.luminance() < 0.22f) Color(0xFF86EBA5) else Color(0xFF146C43) } else colors.onSurfaceVariant)
                 }
-                Row {
-                    IconButton(onClick = onPingAll, enabled = !isPinging, modifier = Modifier.size(48.dp)) {
-                        if (isPinging) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = contentColor)
-                        else Icon(androidx.compose.material.icons.Icons.Default.SignalCellularAlt, contentDescription = "Замер задержки всех серверов", tint = contentColor, modifier = Modifier.size(20.dp))
-                    }
-                    IconButton(onClick = onRefresh, enabled = !isRefreshing, modifier = Modifier.size(48.dp)) {
-                        if (isRefreshing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = contentColor
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.Refresh,
-                                contentDescription = "Обновить подписку",
-                                tint = contentColor,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    if (onDelete != null) IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = "Удалить подписку",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+                expiresAt?.let { Text("Доступ до $it", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
+                if (!sub.isAccount && sub.description.isNotBlank()) Text(sub.description, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }
-
-            TextButton(onClick = { uriHandler.openUri("https://t.me/xsaidi") }) {
-                Text("Поддержка", color = contentColor)
+            IconButton(onClick = onRefresh, enabled = !isRefreshing, modifier = Modifier.size(48.dp)) {
+                if (isRefreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Default.Refresh, contentDescription = "Обновить подписку", tint = colors.primary)
             }
-
-            if (sub.isAccount) Text("Из аккаунта · покупка через бота", style = MaterialTheme.typography.bodySmall, color = contentColor)
-
-            if (sub.description.isNotBlank()) {
-                Text(
-                    sub.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = contentColor.copy(alpha = 0.85f)
-                )
+            IconButton(onClick = onPingAll, enabled = !isPinging, modifier = Modifier.size(48.dp)) {
+                if (isPinging) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Default.SignalCellularAlt, contentDescription = "Замер задержки всех серверов", tint = colors.primary)
             }
-
-            if (hasTraffic) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = if (hasLimit) {
-                            "Трафик: ${formatTrafficMb(sub.remoteTrafficUsedMb)} из ${formatTrafficMb(sub.trafficLimitMb)}"
-                        } else {
-                            "Трафик: ${formatTrafficMb(sub.remoteTrafficUsedMb)}"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = contentColor,
-                        fontWeight = FontWeight.Medium
-                    )
-                    if (hasLimit) {
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxWidth().height(6.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = contentColor.copy(alpha = 0.25f),
-                        )
-                    }
-                }
-            }
-
-            Text(
-                "Обновлено: ${formatSyncTime(sub.lastSyncAt)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = contentColor.copy(alpha = 0.75f)
-            )
-            if (sub.lastSyncError.isNotBlank()) {
-                Text(
-                    "Ошибка: ${sub.lastSyncError}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error
-                )
+            if (onDelete != null) IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Default.Delete, contentDescription = "Удалить подписку", tint = colors.error)
             }
         }
+        if (sub.remoteTrafficUsedMb > 0 || sub.trafficLimitMb > 0) Text(
+            if (sub.trafficLimitMb > 0) "Трафик: ${formatTrafficMb(sub.remoteTrafficUsedMb)} из ${formatTrafficMb(sub.trafficLimitMb)}"
+            else "Трафик: ${formatTrafficMb(sub.remoteTrafficUsedMb)}",
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+        if (sub.lastSyncError.isNotBlank()) Text("Не удалось обновить подписку. Повторите обновление.", style = MaterialTheme.typography.bodySmall, color = colors.error)
     }
 }

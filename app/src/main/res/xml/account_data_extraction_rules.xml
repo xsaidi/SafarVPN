@@ -2,8 +2,10 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="safarvpn.account.xml" />
+        <exclude domain="sharedpref" path="vpn_device_identity.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="safarvpn.account.xml" />
+        <exclude domain="sharedpref" path="vpn_device_identity.xml" />
     </device-transfer>
 </data-extraction-rules>

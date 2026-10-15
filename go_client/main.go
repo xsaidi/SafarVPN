@@ -356,7 +356,6 @@ func main() {
 	}
 	log.Printf("[КЛИЕНТ] WRAP: %s", wrapStatus)
 	log.Printf("[WRAP] Ключ выведен из пароля, режим RTP AEAD активен")
-	log.Printf("[КЛИЕНТ] Device ID: %s", *deviceID)
 	log.Printf("[КЛИЕНТ] Captcha: %s", captchaStatus)
 	log.Println("[КЛИЕНТ] ═══════════════════════════════════════")
 

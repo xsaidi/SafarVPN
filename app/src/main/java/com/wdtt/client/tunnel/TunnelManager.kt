@@ -289,6 +289,10 @@ object TunnelManager {
     }
 
     fun start(context: Context, params: TunnelParams, isSwitching: Boolean = false, forceStart: Boolean = false) {
+        if (com.wdtt.client.account.AccountRepository.get(context).currentDeviceUnbindPending(com.wdtt.client.DeviceIdentity.get(context))) {
+            updateLog("unbind_pending", "Ожидается подтверждение отвязки устройства от всех серверов.", 99, true)
+            return
+        }
         android.util.Log.d("WDTT", "TunnelManager.start() called. isSwitching=$isSwitching, forceStart=$forceStart, running=${running.value}, connecting=${isConnecting.value}")
         synchronized(startGate) {
             if (running.value && !isSwitching) return
@@ -450,7 +454,7 @@ object TunnelManager {
                     "-listen", "127.0.0.1:${params.port}"
                 )
 
-                val androidId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: "unknown"
+                val androidId = com.wdtt.client.DeviceIdentity.get(context)
                 cmd.add("-device-id")
                 cmd.add(androidId)
 

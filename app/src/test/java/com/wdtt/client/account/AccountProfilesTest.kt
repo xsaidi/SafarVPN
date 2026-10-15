@@ -10,6 +10,47 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AccountProfilesTest {
+    @Test fun storedNodeProfilesCanBeSelectedAfterReloadWithoutLosingIdentity() {
+        val prepared = AccountProfiles.prepare(1, listOf(
+            profile("one.example").copy(nodeId = 7),
+            profile("two.example").copy(nodeId = 8),
+        ))
+        val prefs = mutablePreferencesOf()
+        ProfilesStore.mergeAccountPreferences(prefs, prepared, ParsedRemoteSubscription(prepared),
+            prepared.associate { it.id to "encrypted" })
+        for (expected in prepared) {
+            val loaded = ProfilesStore.readStoredProfile(prefs, expected.id) { "synthetic" }!!
+            assertEquals(expected, loaded)
+            // The same owner check used by profileGuard must accept either saved node.
+            assertEquals(loaded.id, AccountProfiles.prepare(1, listOf(loaded)).single().id)
+            assertNotEquals(loaded.id, AccountProfiles.prepare(2, listOf(loaded)).single().id)
+        }
+        val legacy = AccountProfiles.prepare(1, listOf(profile("legacy.example"))).single()
+        ProfilesStore.mergeAccountPreferences(prefs, listOf(legacy), ParsedRemoteSubscription(listOf(legacy)),
+            mapOf(legacy.id to "encrypted"))
+        assertNull(ProfilesStore.readStoredProfile(prefs, legacy.id) { "synthetic" }!!.nodeId)
+        assertNull(ProfilesStore.readStoredProfile(prefs, prepared.first().id) { "synthetic" })
+    }
+
+    @Test fun nodeIdentitySurvivesAddressChangesAndMigratesTraffic() {
+        val old = AccountProfiles.prepare(1, listOf(profile("old.example"))).single()
+        val migrated = AccountProfiles.prepare(1, listOf(profile("old.example").copy(nodeId = 7))).single()
+        val renamed = AccountProfiles.prepare(1, listOf(profile("new.example").copy(nodeId = 7))).single()
+        assertEquals(migrated.id, renamed.id)
+        assertNotEquals(old.id, migrated.id)
+        val prefs = mutablePreferencesOf(stringPreferencesKey("profiles_ids") to old.id,
+            doublePreferencesKey("profile_traffic_${old.id}") to 123.0)
+        ProfilesStore.mergeAccountPreferences(prefs, listOf(migrated), ParsedRemoteSubscription(listOf(migrated)),
+            mapOf(migrated.id to "encrypted"), mapOf(old.id to migrated.id))
+        assertEquals(123.0, prefs[doublePreferencesKey("profile_traffic_${migrated.id}")]!!, 0.0)
+        assertNull(prefs[doublePreferencesKey("profile_traffic_${old.id}")])
+    }
+
+    @Test fun serverConfigurationAcceptsCapabilitiesAndKeepsNodeId() {
+        val parsed = com.wdtt.client.SubscriptionImport.parsePayload("""{"version":1,"profiles":[{"name":"Node","peer":"example:56000","password":"synthetic","node_id":42,"configuration_version":2,"capabilities":["central_device_slots","confirmed_global_unbind","paid_deadline"]}]}""")
+        assertNotNull(parsed)
+        assertEquals(42L, parsed!!.profiles.single().nodeId)
+    }
     private fun profile(peer: String, password: String = "synthetic") =
         ConnectionProfile("import-id", "Server", peer, "hash", 9, 9000, password)
 

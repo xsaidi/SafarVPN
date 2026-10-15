@@ -8,8 +8,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import com.wdtt.client.account.AccountSurface
+import com.wdtt.client.account.SupportLink
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -47,6 +54,11 @@ import com.wdtt.client.PeerAddress
 import com.wdtt.client.ConnectionProfile
 import com.wdtt.client.ProfilesStore
 import com.wdtt.client.account.AccountRepository
+import com.wdtt.client.account.AccountProfiles
+import com.wdtt.client.DeviceIdentity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import android.widget.Toast
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -175,12 +187,6 @@ fun ProfilesTab(
     fun pingAllProfiles(list: List<ConnectionProfile>) {
         if (pingingState.values.any { it }) return
         list.forEach { pingProfile(it) }
-    }
-
-    fun cancelPings() {
-        pingJobs.values.toList().forEach { it.cancel() }
-        pingJobs.clear()
-        profiles.forEach { pingingState[it.id] = false }
     }
 
     val importZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -336,11 +342,13 @@ fun ProfilesTab(
         onImportHandled()
     }
 
-    LaunchedEffect(profiles) {
-        val androidId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: "unknown"
+    val profileLifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(profiles, profileLifecycle, savedServerDtlsPort, savedManualPortsEnabled) {
+        val androidId = DeviceIdentity.get(context)
         val dtlsPort = if (savedManualPortsEnabled) savedServerDtlsPort else 56000
+        profileLifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         while (true) {
-            profiles.forEach { profile ->
+            profiles.filterNot { it.id.startsWith(AccountProfiles.PREFIX) }.forEach { profile ->
                 if (profile.password.isNotBlank() && profile.peer.isNotBlank()) {
                     launch {
                         val status = fetchProfileStatus(profile.peer, dtlsPort, profile.password, androidId)
@@ -353,6 +361,7 @@ fun ProfilesTab(
                 }
             }
             kotlinx.coroutines.delay(8000)
+        }
         }
     }
 
@@ -535,13 +544,13 @@ fun ProfilesTab(
             confirmButton = {
                 Button(
                     onClick = {
-                        val androidId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: "unknown"
+                        val androidId = DeviceIdentity.get(context)
                         val deviceIdToSend = if (unbindOnlyCurrent) androidId else ""
                         val dtlsPort = if (savedManualPortsEnabled) savedServerDtlsPort else 56000
                         deviceStatuses = deviceStatuses + (target.id to (deviceStatuses[target.id] ?: ProfileDeviceStatus()).copy(isLoading = true))
                         scope.launch {
-                            val success = sendUnbindRequest(target.peer, dtlsPort, target.password, deviceIdToSend)
-                            if (success) {
+                            val result = sendUnbindRequest(target.peer, dtlsPort, target.password, deviceIdToSend)
+                            if (result == LegacyUnbind.APPLIED) {
                                 Toast.makeText(context, if (unbindOnlyCurrent) "Устройство успешно отвязано!" else "Все привязки успешно сброшены!", Toast.LENGTH_SHORT).show()
                                 val status = fetchProfileStatus(target.peer, dtlsPort, target.password, androidId)
                                 if (status != null) {
@@ -550,7 +559,9 @@ fun ProfilesTab(
                                     deviceStatuses = deviceStatuses + (target.id to ProfileDeviceStatus(isError = true))
                                 }
                             } else {
-                                Toast.makeText(context, "Не удалось отвязать устройства", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (result == LegacyUnbind.PENDING)
+                                    "Запрос принят. Ожидается подтверждение всех серверов. Проверить завершение можно через аккаунт."
+                                    else "Не удалось отвязать устройства", Toast.LENGTH_LONG).show()
                                 deviceStatuses = deviceStatuses + (target.id to (deviceStatuses[target.id] ?: ProfileDeviceStatus()).copy(isLoading = false))
                             }
                         }
@@ -882,9 +893,11 @@ fun ProfilesTab(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 88.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+        Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         header()
         if (accountState.profile != null && (accountState.refreshing || accountState.error != null)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -896,6 +909,7 @@ fun ProfilesTab(
             }
         }
 
+        AccountSurface {
         visibleSubscriptions.forEach { sub ->
             SubscriptionInfoCard(
                 sub = sub,
@@ -922,6 +936,9 @@ fun ProfilesTab(
                 onDelete = if (sub.isAccount) null else ({ deleteSubTarget = sub }),
                 onPingAll = { pingAllProfiles(profiles) },
                 isPinging = pingingState.values.any { it },
+                statusLabel = if (sub.isAccount) accountState.subscription?.statusLabel else null,
+                active = sub.isAccount && accountState.subscription?.isActive == true,
+                expiresAt = if (sub.isAccount) accountState.subscription?.expiresAtLabel else null,
             )
         }
 
@@ -1069,14 +1086,15 @@ fun ProfilesTab(
                         }
                 ) {
                     AppSectionCard(
-                        contentPadding = PaddingValues(16.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(18.dp),
                         border = if (isActive) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
                         else if (hasIssue) BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
                         else null,
-                        color = if (hasIssue) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.05f)
-                        else null,
-                        shadowElevation = if (isActive || hasIssue) 0.dp else null,
-                        tonalElevation = if (isActive || hasIssue) 0.dp else null,
+                        color = if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                        else MaterialTheme.colorScheme.surface,
+                        shadowElevation = 0.dp,
+                        tonalElevation = 0.dp,
                         modifier = Modifier.clickable(enabled = canSelectServer) {
                             if (profile.id == currentProfileId || applyingProfile) return@clickable
                             applyingProfile = true
@@ -1093,47 +1111,44 @@ fun ProfilesTab(
                             }
                         }
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val flag = getCountryFlag(profile.name)
-                                Text(
-                                    text = if (flag.isNotEmpty()) "$flag ${profile.name}" else profile.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                )
+                        Row(modifier = Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val flag = getCountryFlag(profile.name)
+                            if (flag.isNotEmpty()) Text(flag, style = MaterialTheme.typography.titleLarge)
+                            else Icon(Icons.Filled.Public, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onBackground)
                                 val status = deviceStatuses[profile.id]
+                                if (!profile.id.startsWith(AccountProfiles.PREFIX)) {
+                                Text(when {
+                                    status == null || status.isLoading -> "Устройства: …"
+                                    status.isError -> "Устройства: —"
+                                    else -> "Устройства: ${status.boundDevices} из ${status.maxDevices}"
+                                }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            val pingMs = pingResults[profile.id]
+                            if (pingingState[profile.id] == true) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else if (pingMs != null) {
                                 Text(
-                                    text = when {
-                                        status == null || status.isLoading -> "Устройства: …"
-                                        status.isError -> "Устройства: —"
-                                        else -> "Устройства: ${status.boundDevices} из ${status.maxDevices}"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                val pingMs = pingResults[profile.id]
-                                Text(
-                                    text = when {
-                                        pingingState[profile.id] == true -> "Пинг: измеряем…"
-                                        pingMs == null -> "Пинг: —"
-                                        pingMs < 0 -> "Пинг: недоступен"
-                                        else -> "Пинг: ${pingMs} мс"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (pingMs != null && pingMs < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = if (pingMs < 0) "Недоступен" else "$pingMs мс",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (pingMs < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                 )
                             }
-                            IconButton(onClick = { pingProfile(profile) }, enabled = pingingState[profile.id] != true) {
-                                if (pingingState[profile.id] == true) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                else Icon(Icons.Filled.SignalCellularAlt, contentDescription = "Замер задержки сервера")
-                            }
+                            RadioButton(selected = isActive, onClick = null, enabled = canSelectServer)
                         }
+
                     }
                 }
                 }
             }
         }
+        SupportLink(Modifier.fillMaxWidth())
+        }
         footer()
+        }
     }
         
     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 92.dp))
@@ -1149,68 +1164,6 @@ fun ProfilesTab(
             Icon(Icons.Filled.Add, contentDescription = "Добавить")
         }
     }
-    }
-
-    val isPingingAny = pingingState.values.any { it }
-    if (isPingingAny) {
-        androidx.compose.ui.window.Dialog(onDismissRequest = { }) {
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                                shape = androidx.compose.foundation.shape.CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.SignalCellularAlt,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    
-                    Text(
-                        text = "Замер задержки",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    
-                    Text(
-                        text = "Проверяем доступность и измеряем скорость подключения. Это может занять до 20 секунд.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    
-                    androidx.compose.material3.LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
-                    )
-                    TextButton(onClick = ::cancelPings) {
-                        Text("Отменить")
-                    }
-                }
-            }
-        }
     }
 
     if (showCreateSheet) {
@@ -1537,16 +1490,18 @@ private suspend fun fetchProfileStatus(
     }
 }
 
+private enum class LegacyUnbind { APPLIED, PENDING, FAILED }
+
 private suspend fun sendUnbindRequest(
     peer: String,
     dtlsPort: Int,
     password: String,
     deviceId: String
-): Boolean = withContext(Dispatchers.IO) {
+): LegacyUnbind = withContext(Dispatchers.IO) {
     var conn: HttpURLConnection? = null
 	try {
 		val endpoint = "http://${PeerAddress.httpEndpoint(peer, dtlsPort)}"
-		val nonce = requestProfileChallenge(endpoint) ?: return@withContext false
+		val nonce = requestProfileChallenge(endpoint) ?: return@withContext LegacyUnbind.FAILED
 		val url = URL("$endpoint/api/profile/unbind")
         conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
@@ -1561,10 +1516,15 @@ private suspend fun sendUnbindRequest(
         }
 
         val responseCode = conn.responseCode
-        responseCode == 200
+        val json = if (responseCode in 200..299) JSONObject(conn.inputStream.bufferedReader().use { it.readText() }) else null
+        when {
+            responseCode == 202 || json?.optString("status") == "pending" -> LegacyUnbind.PENDING
+            responseCode == 200 && json?.optBoolean("success") == true -> LegacyUnbind.APPLIED
+            else -> LegacyUnbind.FAILED
+        }
     } catch (e: Exception) {
-        e.printStackTrace()
-        false
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        LegacyUnbind.FAILED
     } finally {
         conn?.disconnect()
 	}

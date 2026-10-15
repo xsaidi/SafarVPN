@@ -509,17 +509,19 @@ class SettingsStore(context: Context) {
         }
     }
 
-    internal suspend fun syncAccountSelection(profiles: List<ConnectionProfile>, applyIfCurrent: (() -> Unit) -> Boolean) {
+    internal suspend fun syncAccountSelection(profiles: List<ConnectionProfile>, applyIfCurrent: (() -> Unit) -> Boolean,
+        migrations: Map<String, String> = emptyMap()) {
         dataStore.edit { prefs ->
             applyIfCurrent {
                 val id = prefs[CURRENT_PROFILE_ID] ?: ""
                 if (id.startsWith(com.wdtt.client.account.AccountProfiles.PREFIX)) {
-                    val profile = profiles.find { it.id == id }
+                    val profile = profiles.find { it.id == (migrations[id] ?: id) }
                     if (profile == null) {
                         prefs.remove(CURRENT_PROFILE_ID); prefs.remove(CURRENT_PROFILE_NAME)
                         prefs.remove(PEER); prefs.remove(VK_HASHES); prefs.remove(SECONDARY_VK_HASH)
                         prefs.remove(CONNECTION_PASSWORD); prefs.remove(CONNECTION_PASSWORD_ENCRYPTED)
                     } else {
+                        prefs[CURRENT_PROFILE_ID] = profile.id
                         prefs[CURRENT_PROFILE_NAME] = profile.name
                         prefs[PEER] = profile.peer
                         prefs[VK_HASHES] = if (profile.useGlobalHashes) prefs[GLOBAL_VK_HASHES]?.ifBlank { profile.vkHashes } ?: profile.vkHashes else profile.vkHashes

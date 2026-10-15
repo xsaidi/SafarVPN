@@ -26,7 +26,8 @@ data class ConnectionProfile(
     val password: String,
     val trafficMb: Double = 0.0,
     val groupId: String = "",
-    val useGlobalHashes: Boolean = vkHashes.isBlank()
+    val useGlobalHashes: Boolean = vkHashes.isBlank(),
+    val nodeId: Long? = null,
 )
 
 data class ProfileGroup(
@@ -67,6 +68,26 @@ class ProfilesStore(context: Context) {
         private fun useGlobalHashesKey(id: String) = booleanPreferencesKey("profile_use_global_hashes_$id")
         private fun trafficKey(id: String) = androidx.datastore.preferences.core.doublePreferencesKey("profile_traffic_$id")
         private fun groupIdKey(id: String) = stringPreferencesKey("profile_group_id_$id")
+        private fun nodeIdKey(id: String) = androidx.datastore.preferences.core.longPreferencesKey("profile_node_id_$id")
+
+        internal fun readStoredProfile(
+            prefs: androidx.datastore.preferences.core.Preferences,
+            id: String,
+            decrypt: (String) -> String?,
+        ): ConnectionProfile? {
+            val name = prefs[nameKey(id)] ?: return null
+            val hashes = prefs[hashesKey(id)] ?: ""
+            return ConnectionProfile(
+                id = id, name = name, peer = prefs[peerKey(id)] ?: "", vkHashes = hashes,
+                workersPerHash = prefs[workersKey(id)] ?: 9,
+                listenPort = prefs[portKey(id)] ?: 9000,
+                password = decrypt(prefs[passKey(id)] ?: "") ?: "",
+                trafficMb = prefs[trafficKey(id)] ?: 0.0,
+                groupId = prefs[groupIdKey(id)] ?: "",
+                useGlobalHashes = prefs[useGlobalHashesKey(id)] ?: hashes.isBlank(),
+                nodeId = prefs[nodeIdKey(id)],
+            )
+        }
 
         private const val GROUPS_IDS_KEY = "groups_ids"
         private fun groupsIdsKey() = stringPreferencesKey(GROUPS_IDS_KEY)
@@ -87,13 +108,18 @@ class ProfilesStore(context: Context) {
         internal fun mergeAccountPreferences(
             prefs: androidx.datastore.preferences.core.MutablePreferences,
             incoming: List<ConnectionProfile>, parsed: ParsedRemoteSubscription?, encrypted: Map<String, String>,
+            migrations: Map<String, String> = emptyMap(),
         ) {
             val ids = (prefs[idsKey()] ?: "").split(',').filter { it.isNotBlank() }.toMutableList()
+            for ((old, new) in migrations) {
+                if (old in ids && prefs[trafficKey(new)] == null) prefs[trafficKey(new)] = prefs[trafficKey(old)] ?: 0.0
+            }
             val removed = ids.filter { it.startsWith(AccountProfiles.PREFIX) && incoming.none { p -> p.id == it } }
             for (id in removed) {
                 ids.remove(id)
                 listOf(nameKey(id), peerKey(id), hashesKey(id), passKey(id), groupIdKey(id)).forEach { prefs.remove(it) }
                 prefs.remove(workersKey(id)); prefs.remove(portKey(id)); prefs.remove(trafficKey(id)); prefs.remove(useGlobalHashesKey(id))
+                prefs.remove(nodeIdKey(id))
             }
             for (p in incoming) {
                 if (p.id !in ids) ids.add(p.id)
@@ -105,6 +131,7 @@ class ProfilesStore(context: Context) {
                 prefs[passKey(p.id)] = encrypted.getValue(p.id)
                 prefs[groupIdKey(p.id)] = p.groupId
                 prefs[useGlobalHashesKey(p.id)] = p.useGlobalHashes
+                if (p.nodeId != null) prefs[nodeIdKey(p.id)] = p.nodeId else prefs.remove(nodeIdKey(p.id))
                 if (prefs[trafficKey(p.id)] == null) prefs[trafficKey(p.id)] = 0.0
             }
             prefs[idsKey()] = ids.joinToString(",")
@@ -145,12 +172,15 @@ class ProfilesStore(context: Context) {
         val incoming = if (parsed != null) AccountProfiles.prepare(requireNotNull(owner), parsed.profiles) else emptyList()
         // Encrypt before touching any saved profiles; failures preserve the previous complete snapshot.
         val encrypted = incoming.associate { it.id to secureStore.encrypt(it.password) }
+        val migrations = if (owner == null) emptyMap() else incoming.filter { it.nodeId != null }.associate {
+            AccountProfiles.legacyId(owner, it.peer) to it.id
+        }
         dataStore.edit { prefs ->
             applyIfCurrent {
-                mergeAccountPreferences(prefs, incoming, parsed, encrypted)
+                mergeAccountPreferences(prefs, incoming, parsed, encrypted, migrations)
             }
         }
-        settings.syncAccountSelection(incoming, applyIfCurrent)
+        settings.syncAccountSelection(incoming, applyIfCurrent, migrations)
     }
 
     val profiles: Flow<List<ConnectionProfile>> = dataStore.data
@@ -159,21 +189,7 @@ class ProfilesStore(context: Context) {
             val idsRaw = prefs[idsKey()] ?: ""
             if (idsRaw.isBlank()) return@map emptyList()
             val ids = idsRaw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-            val list = mutableListOf<ConnectionProfile>()
-            for (id in ids) {
-                val name = prefs[nameKey(id)] ?: ""
-                val peer = prefs[peerKey(id)] ?: ""
-                val hashes = prefs[hashesKey(id)] ?: ""
-                val workers = prefs[workersKey(id)] ?: 9
-                val port = prefs[portKey(id)] ?: 9000
-                val enc = prefs[passKey(id)] ?: ""
-                val pass = secureStore.decrypt(enc) ?: ""
-                val traffic = prefs[trafficKey(id)] ?: 0.0
-                val groupId = prefs[groupIdKey(id)] ?: ""
-                val useGlobal = prefs[useGlobalHashesKey(id)] ?: true
-                list.add(ConnectionProfile(id, name, peer, hashes, workers, port, pass, traffic, groupId, useGlobal))
-            }
-            list
+            ids.mapNotNull { id -> readStoredProfile(prefs, id, secureStore::decrypt) }
         }
 
     val groups: Flow<List<ProfileGroup>> = dataStore.data
@@ -407,6 +423,7 @@ class ProfilesStore(context: Context) {
             prefs[trafficKey(profile.id)] = profile.trafficMb
             prefs[groupIdKey(profile.id)] = profile.groupId
             prefs[useGlobalHashesKey(profile.id)] = profile.useGlobalHashes
+            if (profile.nodeId != null) prefs[nodeIdKey(profile.id)] = profile.nodeId else prefs.remove(nodeIdKey(profile.id))
         }
     }
 
@@ -500,17 +517,7 @@ class ProfilesStore(context: Context) {
 
     suspend fun getProfileOnce(id: String): ConnectionProfile? {
         val prefs = dataStore.data.first()
-        val name = prefs[nameKey(id)] ?: return null
-        val peer = prefs[peerKey(id)] ?: ""
-        val hashes = prefs[hashesKey(id)] ?: ""
-        val workers = prefs[workersKey(id)] ?: 9
-        val port = prefs[portKey(id)] ?: 9000
-        val enc = prefs[passKey(id)] ?: ""
-        val pass = secureStore.decrypt(enc) ?: ""
-        val traffic = prefs[trafficKey(id)] ?: 0.0
-        val groupId = prefs[groupIdKey(id)] ?: ""
-        val useGlobal = prefs[useGlobalHashesKey(id)] ?: hashes.isBlank()
-        return ConnectionProfile(id, name, peer, hashes, workers, port, pass, traffic, groupId, useGlobal)
+        return readStoredProfile(prefs, id, secureStore::decrypt)
     }
 
     suspend fun incrementProfileTraffic(id: String, additionalTrafficMb: Double) = withContext(Dispatchers.IO) {

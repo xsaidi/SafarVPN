@@ -83,6 +83,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.Switch
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.rotate
 import com.wdtt.client.NotificationHelper
 import com.wdtt.client.stripVkUrlStatic
 
@@ -143,6 +144,8 @@ fun SettingsTabContent(
     onImportHandled: () -> Unit = {},
 ) {
     val savedConnectionPassword by settingsStore.connectionPassword.collectAsStateWithLifecycle(initialValue = "")
+    val serverDevices = com.wdtt.client.account.LocalServerDevices.current
+    val currentDeviceUnbinding = serverDevices?.operation?.deviceId == serverDevices?.currentId && serverDevices?.pending == true
     val savedManualPortsEnabled by settingsStore.manualPortsEnabled.collectAsStateWithLifecycle(initialValue = false)
     val savedServerDtlsPort by settingsStore.serverDtlsPort.collectAsStateWithLifecycle(initialValue = 56000)
     val savedServerWgPort by settingsStore.serverWgPort.collectAsStateWithLifecycle(initialValue = 56001)
@@ -1537,9 +1540,9 @@ fun SettingsTabContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "SafarVPN",
+                text = "Туннель",
                 style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onBackground
             )
             
             // Иконка настроек (шестеренка)
@@ -1554,13 +1557,8 @@ fun SettingsTabContent(
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
         // ═══ Подключение — главное действие, сразу на экране ═══
-        AppSectionCard(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             TunnelConnectButton(
                 connected = tunnelRunning && connectionReady && !tunnelReconnecting,
                 connecting = tunnelConnecting || tunnelReconnecting || (tunnelRunning && !connectionReady),
@@ -1579,11 +1577,23 @@ fun SettingsTabContent(
                             }
                         }
                     },
-                    enabled = (isValid && cooldownSeconds == 0 && !tunnelConnecting && !tunnelReconnecting) ||
+                    enabled = (isValid && !currentDeviceUnbinding && cooldownSeconds == 0 && !tunnelConnecting && !tunnelReconnecting) ||
                         tunnelRunning ||
                         tunnelReconnecting ||
                         (tunnelConnecting && connectCancelArmed),
             )
+            if (currentDeviceUnbinding) Text("Ожидаем подтверждения отвязки всех серверов…",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (currentProfileName.isNotBlank()) Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Default.Public, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    Text(currentProfileName, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onBackground)
+                }
+            }
         }
 
             }
@@ -1596,8 +1606,14 @@ fun SettingsTabContent(
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
                 stateDescription = if (advancedExpanded) "Развернуто" else "Свернуто"
             },
+            shape = RoundedCornerShape(20.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+            colors = ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surface),
         ) {
-            Text(if (advancedExpanded) "Расширенные настройки ▴" else "Расширенные настройки ▾")
+            Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(12.dp))
+            Text("Расширенные настройки", modifier = Modifier.weight(1f))
+            Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(20.dp).rotate(if (advancedExpanded) 90f else 0f))
         }
         if (advancedExpanded) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
