@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
         activeActivities++
         currentActivity = this
         AccountRepository.get(applicationContext).onForeground()
+        AppUpdates.check(applicationContext)
         ManlCaptchaWebViewManager.checkAndShowPendingCaptcha(this)
         VkAuthWebViewManager.checkAndShowPendingAuth(this)
     }
@@ -197,6 +198,7 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
 
             WDTTTheme(themeMode = themeMode, dynamicColor = isDynamicColor, themePalette = themePalette) {
+                AppUpdatePrompt()
                 MainScreen(
                     settingsStore = settingsStore,
                     themeMode = themeMode,

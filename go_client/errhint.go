@@ -9,6 +9,10 @@ func workerErrorHint(err error) string {
 	}
 	text := strings.ToLower(err.Error())
 	switch {
+	case strings.Contains(text, "device_limit"):
+		return "достигнут лимит устройств — отвяжите ненужное устройство или увеличьте лимит в аккаунте"
+	case strings.Contains(text, "device_access") || strings.Contains(text, "другому устройству"):
+		return "сервер отклонил доступ устройства — проверьте лимит и привязку в аккаунте"
 	case strings.Contains(text, "wrap_auth_timeout"):
 		return "сервер не ответил на WRAP/DTLS — проверьте пароль, IP/порт и что wdtt-server запущен"
 	case strings.Contains(text, "context canceled"):

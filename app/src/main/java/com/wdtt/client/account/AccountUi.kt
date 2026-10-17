@@ -237,7 +237,7 @@ private fun SignedInAccount(
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             shape = RoundedCornerShape(14.dp),
         ) {
-            Text(if (state.subscription?.isActive == true) "Продлить подписку" else "Купить подписку")
+            Text(if (state.subscription?.hasSubscription == true) "Продлить подписку" else "Купить подписку")
         }
         TextButton(
             onClick = { billing.reload(); onRefresh() },

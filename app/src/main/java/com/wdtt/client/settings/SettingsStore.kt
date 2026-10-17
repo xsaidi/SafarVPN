@@ -296,6 +296,7 @@ class SettingsStore(context: Context) {
                             store.migrateSecretsToKeystore()
                             store.migrateLegacyWhitelistMode()
                             store.runVersionMigrations()
+                            store.seedDefaultBypass()
                         } finally {
                             if (!migrationReady.isCompleted) {
                                 migrationReady.complete(Unit)
@@ -784,6 +785,19 @@ class SettingsStore(context: Context) {
 
     suspend fun saveBypassRoutes(raw: String) {
         dataStore.edit { prefs -> prefs[BYPASS_ROUTES] = raw.trim() }
+    }
+
+    suspend fun seedDefaultBypass() {
+        val seeded = booleanPreferencesKey("russian_services_bypass_v1")
+        dataStore.edit { prefs ->
+            if (prefs[seeded] == true) return@edit
+            prefs[BYPASS_ROUTES] = DefaultBypass.mergeDomains(prefs[BYPASS_ROUTES] ?: "")
+            // In whitelist mode selected packages mean the opposite: preserve the user's policy.
+            if (prefs[IS_WHITELIST] != true) {
+                prefs[EXCLUDED_APPS] = DefaultBypass.mergePackages(prefs[EXCLUDED_APPS] ?: "")
+            }
+            prefs[seeded] = true
+        }
     }
 
     suspend fun saveExceptionsMode(packages: String, isWhitelist: Boolean) {

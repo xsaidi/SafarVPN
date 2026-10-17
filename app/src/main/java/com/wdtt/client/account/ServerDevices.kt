@@ -7,6 +7,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.lerp
+import com.wdtt.client.WDTTColors
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Devices
+import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -254,6 +266,7 @@ internal class ServerDevices(
     return controller
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun ServerDevicesDialog(controller: ServerDevices, onDismiss: () -> Unit) {
     var target by remember { mutableStateOf<ServerDevice?>(null) }
     var selectedLimit by remember(controller.maxDevices) { mutableStateOf(controller.maxDevices ?: 1) }
@@ -261,19 +274,40 @@ internal class ServerDevices(
     LaunchedEffect(selectedLimit, controller.maxDevices, controller.pending, controller.fresh) {
         controller.loadLimitQuote(selectedLimit)
     }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Устройства") }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Общий лимит для всех серверов: ${controller.devices.size} из ${controller.maxDevices ?: "…"}")
-            Text("Лимит устройств", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 720.dp).verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Icon(Icons.Outlined.Devices, null, Modifier.padding(16.dp).size(32.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Устройства", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("Общий лимит для всех серверов: ${controller.devices.size} из ${controller.maxDevices ?: "…"}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "Закрыть") }
+            }
+            HorizontalDivider()
+            Text("Лимит устройств", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = { selectedLimit-- }, enabled = selectedLimit > 1 && !controller.pending && controller.fresh,
                     modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = "Уменьшить лимит устройств" }) { Text("−") }
-                Text("$selectedLimit из 5", style = MaterialTheme.typography.titleMedium)
+                Text("$selectedLimit из 5", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 OutlinedButton(onClick = { selectedLimit++ }, enabled = selectedLimit < 5 && !controller.pending && controller.fresh,
                     modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = "Увеличить лимит устройств" }) { Text("+") }
             }
-            Text("Одно устройство включено. Дополнительное — 70 ₽ за 30 дней. При увеличении оплачивается оставшийся срок подписки; при уменьшении возврата нет.",
-                style = MaterialTheme.typography.bodySmall)
+            }
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+                Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text("Одно устройство включено. Дополнительное — 70 ₽ за 30 дней. При увеличении оплачивается оставшийся срок подписки; при уменьшении возврата нет.",
+                        color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
             if (controller.quoteLoading) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
             controller.limitQuote?.let { quote ->
                 Text(if (quote.target > quote.from) "К оплате с баланса: ${money(quote.price)}" else "Уменьшение лимита без возврата средств.")
@@ -287,20 +321,47 @@ internal class ServerDevices(
                 TextButton(onClick = { dialogScope.launch { controller.loadLimitQuote(selectedLimit) } }, enabled = !controller.quoteLoading && !controller.pending) { Text("Повторить расчёт") }
             }
             HorizontalDivider()
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Ваши устройства", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text("${controller.devices.size} из ${controller.maxDevices ?: "…"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (!controller.fresh) Text("Обновляем данные. Сохранённый список может быть устаревшим.")
             if (controller.fresh && controller.devices.isEmpty()) Text("Привязанных устройств нет.")
             controller.devices.forEachIndexed { index, device ->
-                Column {
-                    Text(if (device.id == controller.currentId) "Это устройство" else "Устройство ${index + 1}")
+                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Outlined.Smartphone, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                    Column(Modifier.weight(1f)) {
+                    Text(if (device.id == controller.currentId) "Это устройство" else "Устройство ${index + 1}", fontWeight = FontWeight.SemiBold)
                     if (device.revoking || controller.operation?.deviceId == device.id) Text("Ожидаем подтверждения отвязки всех серверов…")
-                    else TextButton(onClick = { target = device }, enabled = controller.fresh && !controller.pending) {
+                    }
+                    if (!device.revoking && controller.operation?.deviceId != device.id) TextButton(onClick = { target = device }, enabled = controller.fresh && !controller.pending) {
                         Text("Отвязать")
                     }
                 }
+                }
             }
-            controller.notice?.let { Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+            controller.notice?.let { message ->
+                val success = message == "Устройство успешно отвязано от всех серверов."
+                Surface(shape = RoundedCornerShape(16.dp), color = if (success)
+                    lerp(MaterialTheme.colorScheme.surface, WDTTColors.terminalGreen, 0.12f)
+                    else MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    border = if (success) BorderStroke(1.dp, WDTTColors.terminalGreen.copy(alpha = 0.4f)) else null) {
+                    Row(Modifier.padding(16.dp).semantics { liveRegion = LiveRegionMode.Polite }, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(if (success) Icons.Outlined.CheckCircle else Icons.Outlined.Info, null,
+                            tint = if (success) WDTTColors.terminalGreen else MaterialTheme.colorScheme.primary)
+                        Text(message)
+                    }
+                }
+            }
+            Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) {
+                Text("Закрыть", style = MaterialTheme.typography.titleMedium)
+            }
         }
-    }, confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } })
+    }
     target?.let { device ->
         AlertDialog(onDismissRequest = { target = null }, title = { Text("Отвязать устройство?") }, text = {
             Text("Доступ этого устройства будет отозван на всех серверах. Место освободится после их подтверждения." +

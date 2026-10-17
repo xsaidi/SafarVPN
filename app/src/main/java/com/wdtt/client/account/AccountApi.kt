@@ -17,12 +17,15 @@ internal class AccountApi {
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.SECONDS).build()
 
-    fun request(path: String, body: JSONObject? = null, accessToken: String? = null): JSONObject {
+    fun request(path: String, body: JSONObject? = null, accessToken: String? = null,
+        callTimeoutMillis: Long? = null): JSONObject {
         val builder = Request.Builder().url("https://safarvpn.ru/api/cabinet$path")
             .header("Accept", "application/json").header("Cache-Control", "no-store")
         if (accessToken != null) builder.header("Authorization", "Bearer $accessToken")
         if (body != null) builder.post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
-        client.newCall(builder.build()).execute().use { response ->
+        val call = client.newCall(builder.build())
+        callTimeoutMillis?.let { require(it > 0); call.timeout().timeout(it, TimeUnit.MILLISECONDS) }
+        call.execute().use { response ->
             if (!response.isSuccessful) {
                 // Classify only fixed backend reasons. Raw provider/server errors never leave this method.
                 var inactive = false

@@ -407,6 +407,15 @@ object TunnelManager {
                     abortStart(isSwitching, "Пароль не указан")
                     return@launch
                 }
+                val deviceProblem = com.wdtt.client.account.AccountRepository.get(appContext)
+                    .connectionDeviceProblem(activeProfileId, params.peer, params.connectionPassword,
+                        DeviceIdentity.get(appContext))
+                if (deviceProblem != null) {
+                    lastFatalError.value = deviceProblem
+                    updateLog("device_access", deviceProblem, 99, true)
+                    abortStart(isSwitching, deviceProblem)
+                    return@launch
+                }
                 if (
                     SettingsStore.normalizeConnectionMode(params.connectionMode) == SettingsStore.CONNECTION_MODE_SOCKS &&
                     params.socksAuthEnabled &&
@@ -740,12 +749,19 @@ object TunnelManager {
                     // 0. FATAL AUTH — мгновенная остановка (пароль / срок / устройство)
                     if (lineTrim.contains("FATAL_AUTH")) {
                         val reason = when {
+                            lineTrim.contains("DEVICE_LIMIT") ->
+                                if (activeProfileId.startsWith(com.wdtt.client.account.AccountProfiles.PREFIX))
+                                    com.wdtt.client.account.ConnectionDeviceCheck.LIMIT
+                                else "Достигнут лимит устройств. Отвяжите ненужное устройство или увеличьте лимит"
+                            lineTrim.contains("DEVICE_ACCESS") || lineTrim.contains("другому устройству") ->
+                                if (activeProfileId.startsWith(com.wdtt.client.account.AccountProfiles.PREFIX))
+                                    "Сервер отклонил доступ этого устройства. Проверьте лимит и привязку в разделе «Устройства аккаунта»"
+                                else "Сервер отклонил доступ этого устройства. Проверьте лимит и привязку устройства на сервере"
                             lineTrim.contains("неверный пароль") -> "Неверный пароль подключения"
-                            lineTrim.contains("истёк") -> "Срок действия пароля истёк"
-                            lineTrim.contains("другому устройству") -> "Пароль привязан к другому устройству"
+                            lineTrim.contains("истёк") -> "Подписка истекла. Продлите её в разделе «Аккаунт»"
                             else -> "Ошибка авторизации"
                         }
-                        handleCriticalError("\uD83D\uDD12 $reason. Воркеры остановлены.")
+                        handleCriticalError("\uD83D\uDD12 ${reason.trimEnd('.')}. Подключение остановлено.")
                         return@forEachLine
                     }
 
@@ -1248,6 +1264,7 @@ object TunnelManager {
     }
 
     private fun handleCriticalError(message: String) {
+        lastFatalError.value = message
         updateLog("circuit_breaker", "[СТОП] $message", -1, true)
         stop()
     }
@@ -1306,7 +1323,8 @@ object TunnelManager {
                         lastActiveAtMs == 0L &&
                         !ManlCaptchaWebViewManager.isCaptchaPending
                     ) {
-                        handleCriticalError("\uD83D\uDD12 Неверный пароль подключения или несовместимый WRAP. Воркеры остановлены.")
+                        val problem = accountConnectionTimeoutProblem()
+                        handleCriticalError(problem)
                         return@launch
                     } else if (System.currentTimeMillis() - zeroWorkersSince > 90_000 && !ManlCaptchaWebViewManager.isCaptchaPending) {
                         updateLog("watchdog", "⚠ Зомби-процесс (0 воркеров 90с). Перезапуск...", 50, true)
@@ -1341,6 +1359,16 @@ object TunnelManager {
                 delay(5_000)
             }
         }
+    }
+
+    private suspend fun accountConnectionTimeoutProblem(): String {
+        val context = lastContext?.get()
+        val params = currentParams
+        val deviceProblem = if (context != null && params != null) {
+            com.wdtt.client.account.AccountRepository.get(context).connectionDeviceProblem(
+                activeProfileId, params.peer, params.connectionPassword, DeviceIdentity.get(context))
+        } else null
+        return deviceProblem ?: "Сервер не подтвердил подключение. Причина не установлена: проверьте сеть или попробуйте другой сервер. Подключение остановлено."
     }
 
     fun restartTransport(reason: String = "смена сети", force: Boolean = false) {

@@ -9,6 +9,9 @@ internal object AccountProfiles {
     const val SUBSCRIPTION_ID = "account-wdtt"
     const val URL = "account://wdtt"
     const val PREFIX = "account-wdtt-"
+    fun retained(owner: Long, profiles: List<ConnectionProfile>): List<ConnectionProfile> = profiles.filter {
+        it.id.startsWith(PREFIX) && runCatching { prepare(owner, listOf(it)).single().id == it.id }.getOrDefault(false)
+    }
     fun legacyId(owner: Long, peer: String): String = PREFIX + UUID.nameUUIDFromBytes("$owner:$peer".toByteArray(Charsets.UTF_8))
 
     fun prepare(owner: Long, profiles: List<ConnectionProfile>): List<ConnectionProfile> {

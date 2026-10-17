@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
@@ -63,7 +64,7 @@ class AccountRepository private constructor(context: Context) {
     init {
         if (pending == null) runCatching { store.savePending(null) }
         pending?.let { scheduleExpiry(it, generation.current()) }
-        if (session == null || session?.toSubscription()?.isActive == false) clearAccountProfiles()
+        if (session == null) clearAccountProfiles()
     }
 
     fun beginLogin(context: Context, provider: String) {
@@ -223,13 +224,10 @@ class AccountRepository private constructor(context: Context) {
         val gen = generation.current()
         var login: PendingLogin? = null
         var signedIn = false
-        var inactive = false
         generation.apply(gen) {
             login = pending
             signedIn = session != null
-            inactive = session?.toSubscription()?.isActive == false
         }
-        if (inactive) clearAccountProfiles()
         val active = login
         if (active != null && System.currentTimeMillis() >= active.expiresAt) {
             cancelLogin("Время ожидания входа истекло. Попробуйте снова.")
@@ -286,7 +284,11 @@ class AccountRepository private constructor(context: Context) {
                     SubscriptionImport.parsePayload(it.toString()) ?: throw IOException("Invalid account profiles")
                 }
                 profilesMutex.withLock {
-                    profiles.syncAccountSubscription(owner, parsed) { action -> generation.apply(gen, action) }
+                    val retained = if (parsed == null && subscription.optBoolean("has_subscription")) {
+                        AccountProfiles.retained(owner, profiles.profiles.first()).takeIf { it.isNotEmpty() }
+                            ?.let { com.wdtt.client.ParsedRemoteSubscription(it) }
+                    } else null
+                    profiles.syncAccountSubscription(owner, parsed ?: retained) { action -> generation.apply(gen, action) }
                     generation.apply(gen) {
                         val current = session ?: throw StaleAccountRequest()
                         val updated = AccountSession(current.access, current.refresh, current.profile,
@@ -331,6 +333,43 @@ class AccountRepository private constructor(context: Context) {
         val operation = store.read("server_operation") ?: return@synchronized false
         operation.optLong("owner") == owner && operation.optString("kind") == "unbind" &&
             operation.optString("device_id") == deviceId
+    }
+
+    /** Only query this account for a matching account-owned profile, never for manual servers. */
+    internal suspend fun connectionDeviceProblem(profileId: String, peer: String, password: String,
+        deviceId: String): String? {
+        if (!profileId.startsWith(AccountProfiles.PREFIX)) return null
+        val gen = generation.current()
+        return try {
+            kotlinx.coroutines.withTimeoutOrNull(5_000) {
+                val owner = currentSession(gen).profile.getLong("id")
+                val profile = profiles.profiles.first().firstOrNull { it.id == profileId } ?: return@withTimeoutOrNull null
+                if (profile.peer != peer || profile.password != password ||
+                    AccountProfiles.prepare(owner, listOf(profile)).single().id != profileId) return@withTimeoutOrNull null
+                val subscription = currentSession(gen).toSubscription()
+                if (subscription?.hasSubscription == true && !subscription.isActive) {
+                    return@withTimeoutOrNull when (subscription.statusLabel) {
+                        "Срок подписки истёк" -> "Подписка истекла. Продлите подписку в разделе «Аккаунт». Серверы сохранены."
+                        "Ожидает активации" -> "Подписка активируется. Дождитесь подтверждения серверов и обновите статус аккаунта."
+                        else -> "Подписка неактивна. Обновите статус или продлите её в разделе «Аккаунт»."
+                    }
+                }
+                val problem = ConnectionDeviceCheck.check(deviceId) { suffix ->
+                    // Diagnostics must not hold up connection startup or trigger a slow token refresh.
+                    withContext(Dispatchers.IO) {
+                        check(suffix in setOf("/status", "/devices"))
+                        api.request("/auth/mobile/server/v1$suffix", accessToken = currentSession(gen).access,
+                            callTimeoutMillis = 1_500)
+                    }
+                }
+                currentSession(gen) // Discard advice if the user logged out or changed account.
+                problem
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null // An unavailable account API must not break an otherwise working tunnel.
+        }
     }
 
     internal fun pendingDeviceLimit(owner: Long): JSONObject? = synchronized(generation) {
@@ -416,7 +455,7 @@ class AccountRepository private constructor(context: Context) {
                     // the same lock instead of skipping cleanup merely because its generation changed.
                     profiles.syncAccountSubscription(null, null) { action ->
                         synchronized(generation) {
-                            if (session?.toSubscription()?.isActive != true) { action(); true } else false
+                            if (session == null) { action(); true } else false
                         }
                     }
                 }
@@ -430,7 +469,7 @@ class AccountRepository private constructor(context: Context) {
         var valid = false
         generation.apply(gen) {
             val signedIn = session
-            valid = signedIn?.toSubscription()?.isActive == true &&
+            valid = signedIn?.toSubscription()?.hasSubscription == true &&
                 AccountProfiles.prepare(signedIn.profile.getLong("id"), listOf(profile)).single().id == profile.id
         }
         return if (valid) ({ action -> generation.apply(gen, action) }) else null
@@ -500,6 +539,8 @@ private fun safeSubscription(json: JSONObject): JSONObject {
     val has = json.getBoolean("has_subscription")
     val details = if (has) json.getJSONObject("subscription").let {
         JSONObject().put("status", it.getString("status").take(64)).put("is_active", it.getBoolean("is_active"))
+            .put("is_trial", it.optBoolean("is_trial", false))
+            .put("is_expired", it.optBoolean("is_expired", false))
             .put("expires_at", it.nullableString("expires_at"))
     } else null
     return JSONObject().put("has_subscription", has).put("subscription", details)
@@ -513,15 +554,17 @@ private fun JSONObject.toProfile(): AccountProfileUi {
         nullableString("email"), nullableString("username")?.let { "@$it" }, getLong("id"))
 }
 
-private fun AccountSession.toSubscription(): WdttSubscriptionUi? {
-    val cached = subscription ?: return null
+private fun AccountSession.toSubscription(): WdttSubscriptionUi? = subscription?.let { subscriptionUi(it, checkedAt) }
+
+internal fun subscriptionUi(cached: JSONObject, checkedAt: Long? = null): WdttSubscriptionUi {
     val has = cached.getBoolean("has_subscription")
     val sub = cached.optJSONObject("subscription")
     val expiry = sub?.nullableString("expires_at")?.let { runCatching { Instant.parse(it) }.getOrNull() }
     val active = sub?.optBoolean("is_active") == true && (expiry == null || expiry.isAfter(Instant.now()))
-    val status = if (sub?.optBoolean("is_active") == true && !active) "expired" else sub?.optString("status")
+    val expired = sub?.optBoolean("is_expired") == true || (expiry != null && !expiry.isAfter(Instant.now()))
+    val status = if (expired) "expired" else sub?.optString("status")
     val label = when (status) {
-        "active" -> "Активна"
+        "active" -> if (sub?.optBoolean("is_trial") == true) "Пробный период · 2 дня" else "Активна"
         "expired" -> "Срок подписки истёк"
         "pending_payment" -> "Ожидает оплаты"
         "pending_activation" -> "Ожидает активации"

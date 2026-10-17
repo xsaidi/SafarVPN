@@ -10,6 +10,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AccountProfilesTest {
+    @Test fun expiryRetainsOnlyCurrentOwnersServers() {
+        val mine = AccountProfiles.prepare(1, listOf(profile("one.example"))).single()
+        val other = AccountProfiles.prepare(2, listOf(profile("two.example"))).single()
+        assertEquals(listOf(mine), AccountProfiles.retained(1, listOf(mine, other, profile("manual.example"))))
+    }
     @Test fun storedNodeProfilesCanBeSelectedAfterReloadWithoutLosingIdentity() {
         val prepared = AccountProfiles.prepare(1, listOf(
             profile("one.example").copy(nodeId = 7),

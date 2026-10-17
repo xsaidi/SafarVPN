@@ -551,7 +551,7 @@ class ProfilesStore(context: Context) {
         val p = getProfileOnce(id) ?: return
         if (id.startsWith(AccountProfiles.PREFIX)) {
             val guard = com.wdtt.client.account.AccountRepository.get(context).profileGuard(p)
-                ?: throw IllegalStateException("Войдите в аккаунт с активной подпиской")
+                ?: throw IllegalStateException("Войдите в аккаунт владельца подписки")
             settings.applyAccountProfile(p, guard)
             return
         }

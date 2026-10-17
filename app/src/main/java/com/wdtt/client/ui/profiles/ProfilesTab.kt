@@ -904,7 +904,8 @@ fun ProfilesTab(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (accountState.refreshing) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 Text(if (accountState.refreshing) "Обновляем подписку аккаунта…" else accountState.error.orEmpty(),
-                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (!accountState.refreshing) TextButton(onClick = account::refreshAccount) { Text("Повторить") }
             }
         }

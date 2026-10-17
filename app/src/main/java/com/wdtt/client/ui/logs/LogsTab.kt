@@ -50,6 +50,11 @@ fun LogsTab() {
     val context = LocalContext.current
     val currentLogs by TunnelManager.logs.collectAsStateWithLifecycle()
     val lastFatalError by TunnelManager.lastFatalError.collectAsStateWithLifecycle()
+    val serverDevices = com.wdtt.client.account.LocalServerDevices.current
+    var showDevices by remember { mutableStateOf(false) }
+    if (showDevices && serverDevices != null) {
+        com.wdtt.client.account.ServerDevicesDialog(serverDevices) { showDevices = false }
+    }
     val statsText by TunnelManager.stats.collectAsStateWithLifecycle()
     val isRunning by TunnelManager.running.collectAsStateWithLifecycle()
     val isConnecting by TunnelManager.isConnecting.collectAsStateWithLifecycle()
@@ -164,6 +169,11 @@ fun LogsTab() {
                     }
                     IconButton(onClick = { TunnelManager.lastFatalError.value = null }) {
                         Icon(Icons.Default.Delete, contentDescription = "Dismiss", tint = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+                if (serverDevices != null && lastFatalError.orEmpty().contains("Устройства аккаунта")) {
+                    TextButton(onClick = { showDevices = true }, modifier = Modifier.padding(horizontal = 12.dp).heightIn(min = 48.dp)) {
+                        Text("Устройства и лимит")
                     }
                 }
             }

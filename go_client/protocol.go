@@ -38,7 +38,9 @@ func RequestConfig(conn net.Conn, localPort, deviceID, password string) (string,
 		case "expired":
 			return "", fmt.Errorf("FATAL_AUTH: срок действия пароля истёк")
 		case "device_mismatch":
-			return "", fmt.Errorf("FATAL_AUTH: пароль привязан к другому устройству")
+			return "", fmt.Errorf("FATAL_AUTH: DEVICE_ACCESS: сервер отклонил доступ устройства")
+		case "device_limit":
+			return "", fmt.Errorf("FATAL_AUTH: DEVICE_LIMIT: достигнут лимит устройств")
 		default:
 			return "", fmt.Errorf("FATAL_AUTH: доступ запрещён (%s)", reason)
 		}
@@ -88,7 +90,9 @@ func RequestRawConfig(conn net.Conn, deviceID, password string) (ip, dnsCSV stri
 		case "expired":
 			return "", "", 0, fmt.Errorf("FATAL_AUTH: срок действия пароля истёк")
 		case "device_mismatch":
-			return "", "", 0, fmt.Errorf("FATAL_AUTH: пароль привязан к другому устройству")
+			return "", "", 0, fmt.Errorf("FATAL_AUTH: DEVICE_ACCESS: сервер отклонил доступ устройства")
+		case "device_limit":
+			return "", "", 0, fmt.Errorf("FATAL_AUTH: DEVICE_LIMIT: достигнут лимит устройств")
 		default:
 			return "", "", 0, fmt.Errorf("FATAL_AUTH: доступ запрещён (%s)", reason)
 		}
